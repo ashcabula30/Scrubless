@@ -4,15 +4,9 @@
 
 # Scrubless
 
-[![Runs](https://img.shields.io/badge/RUNS-100%25%20LOCAL-2D9D78?style=for-the-badge&labelColor=555555)](#-privacy)
-[![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=555555)](#-system-requirements)
-[![Editor](https://img.shields.io/badge/EDITOR-PREMIERE%20PRO-9999FF?style=for-the-badge&logo=adobepremierepro&logoColor=white&labelColor=555555)](#-brief--rough-cut)
-[![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows11&logoColor=white&labelColor=555555)](#-getting-started)
-[![Version](https://img.shields.io/badge/VERSION-0.4.0-1473E6?style=for-the-badge&labelColor=555555)](#-roadmap)
+[![Runs](https://img.shields.io/badge/RUNS-100%25%20LOCAL-2D9D78?style=for-the-badge&labelColor=555555)](#-privacy) [![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=555555)](#-system-requirements) [![Editor](https://img.shields.io/badge/EDITOR-PREMIERE%20PRO-9999FF?style=for-the-badge&logo=adobepremierepro&logoColor=white&labelColor=555555)](#-brief--rough-cut) [![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows11&logoColor=white&labelColor=555555)](#-getting-started) [![Version](https://img.shields.io/badge/VERSION-0.4.0-1473E6?style=for-the-badge&labelColor=555555)](#-roadmap)
 
-> Stop scrubbing through footage. Scrubless listens to and watches every clip once, on your own GPU, then finds
-> the exact take where a line is said or a shot appears, in under a second. Paste a brief, pick your takes, and
-> get a Premiere rough cut.
+> Stop scrubbing through footage. Scrubless listens to and watches every clip once, on your own GPU, then finds the exact take where a line is said or a shot appears, in under a second. Paste a brief, pick your takes, and get a Premiere rough cut.
 
 ---
 
@@ -117,13 +111,13 @@ cd ui; npm install; npm run build; cd ..                      # UI -> footage_fi
 **Command line** (`footage.cmd <command>`):
 
 ```text
-footage index "<footage folder or b2://bucket/folder/>"   # index once; re-run picks up new files
-footage find "I can't stop drinking this tea"            # where is this line said?
-footage scene "hand pouring tea, close-up" --sheet x.jpg  # where does this shot appear? (+ contact sheet)
-footage brief brief.txt                                   # every line and visual in a text brief
-footage roughcut brief.txt --out roughcut.xml             # Premiere sequence from a brief
-footage serve                                             # API + UI on http://127.0.0.1:7792
-footage doctor                                            # GPU, preset and Backblaze key check
+footage index "<folder or b2://bucket/folder/>"   # index; re-run adds new files
+footage find "I can't stop drinking this tea"    # where is this line said?
+footage scene "hand pouring tea" --sheet x.jpg   # where is this shot? (+ contact sheet)
+footage brief brief.txt                          # every line and visual in a brief
+footage roughcut brief.txt --out cut.xml         # Premiere sequence from a brief
+footage serve                                    # API + UI on 127.0.0.1:7792
+footage doctor                                   # GPU, preset, Backblaze key
 ```
 
 **Release:** bump `AppVersion` in `installer/Scrubless.iss`, then run `installer/build-installer.ps1`
