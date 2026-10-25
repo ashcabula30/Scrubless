@@ -1,0 +1,16 @@
+# Build output
+ui/node_modules/
+footage_finder/static/
+installer/build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Search data, logs, local runs
+.footage-index/
+*.log
+
+# Client material used for local testing (briefs, rough cuts, Premiere projects): never commit
+examples/

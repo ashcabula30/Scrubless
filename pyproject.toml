@@ -1,0 +1,43 @@
+[project]
+name = "footage-finder"
+version = "0.1.0"
+description = "Search footage by what is said and what is shown, locally."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faster-whisper>=1.1",
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9,<10",
+    "rapidfuzz>=3.9",
+    "sentence-transformers>=3.0",
+    "torch>=2.7",
+    "numpy",
+    "transformers>=4.49",
+    "pillow",
+    "sentencepiece",
+    "protobuf",
+    "b2sdk>=2.5",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pywebview>=5.0",
+    "rapidocr-onnxruntime>=1.4",
+    "opencv-python-headless>=4.9",
+    "python-multipart",
+]
+
+[project.scripts]
+footage = "footage_finder.cli:main"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["footage_finder"]
