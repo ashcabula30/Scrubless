@@ -4,6 +4,7 @@ import SearchPage from "./pages/Search";
 import BriefPage from "./pages/Brief";
 import LibraryPage from "./pages/Library";
 import SettingsPage from "./pages/Settings";
+import Icon from "./icons";
 
 type Page = "search" | "brief" | "library" | "settings";
 
@@ -20,11 +21,11 @@ type AppCtx = {
 const Ctx = createContext<AppCtx>(null as unknown as AppCtx);
 export const useApp = () => useContext(Ctx);
 
-const PAGES: { id: Page; label: string }[] = [
-  { id: "search", label: "Search" },
-  { id: "brief", label: "Brief → Rough cut" },
-  { id: "library", label: "Library" },
-  { id: "settings", label: "Settings" },
+const PAGES: { id: Page; label: string; short: string }[] = [
+  { id: "search", label: "Search", short: "Search" },
+  { id: "brief", label: "Brief → Rough cut", short: "Brief" },
+  { id: "library", label: "Library", short: "Library" },
+  { id: "settings", label: "Settings", short: "Settings" },
 ];
 
 export default function App() {
@@ -112,25 +113,26 @@ export default function App() {
     <Ctx.Provider value={ctx}>
       <div className="shell">
         <nav className="nav">
-          <div className="brand">
-            Scrubless
-            <small>Goodo Studios</small>
-          </div>
+          <img className="logo" src="logo.svg" alt="Scrubless" title="Scrubless" />
           {PAGES.map((p) => (
-            <button key={p.id} className={`nav-item${page === p.id ? " on" : ""}`} onClick={() => go(p.id)}>
-              {p.label}
-              {p.id === "library" && active > 0 && <span className="badge blue">{active}</span>}
+            <button key={p.id} className={`nav-item${page === p.id ? " on" : ""}`} onClick={() => go(p.id)} title={p.label}>
+              <span className="nav-icon">
+                <Icon name={p.id} />
+                {p.id === "library" && active > 0 && <span className="nav-badge">{active}</span>}
+              </span>
+              <span className="nav-label">{p.short}</span>
             </button>
           ))}
-          <div className="nav-foot col" style={{ gap: 4 }}>
-            <div className="row">
-              <span className={`dot ${status ? (status.ready ? "ok" : "warn") : "bad"}`} />
-              {status ? (status.ready ? "Ready" : "Loading models…") : "Server not running"}
-            </div>
-            {status?.gpu && <div className="ellipsis" title={status.gpu}>{status.gpu.replace("NVIDIA GeForce ", "")}</div>}
-            <div>
-              {sources.length} folder{sources.length === 1 ? "" : "s"} indexed
-            </div>
+          <div
+            className="nav-foot"
+            title={
+              status
+                ? `${status.ready ? "Ready" : "Loading models…"}\n${status.gpu ?? "CPU only"}\n${sources.length} folder(s) indexed`
+                : "Server not running"
+            }
+          >
+            <span className={`dot ${status ? (status.ready ? "ok" : "warn") : "bad"}`} />
+            <span>{status ? (status.ready ? "Ready" : "Loading") : "Offline"}</span>
           </div>
         </nav>
         <main className="main">

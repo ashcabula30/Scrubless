@@ -3,6 +3,7 @@ import { api, Result } from "../api";
 import { useApp } from "../App";
 import ResultCard from "../components/ResultCard";
 import PreviewPlayer from "../components/PreviewPlayer";
+import Icon from "../icons";
 
 type Mode = "both" | "said" | "shown";
 
@@ -129,26 +130,30 @@ export default function SearchPage() {
 
   return (
     <>
-      <div className="topbar">
-        <input
-          ref={input}
-          className="input big grow"
-          placeholder={'Type a line ("I can\'t stop drinking this tea") or describe a shot ("hand pouring tea, close-up")'}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && run()}
-        />
-        <div className="seg">
+      <div className="topbar search-top">
+        <label className="searchbar grow">
+          <Icon name="search" />
+          <input
+            ref={input}
+            placeholder={'Type a line ("I can\'t stop drinking this tea") or describe a shot ("hand pouring tea, close-up")'}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && run()}
+          />
+          <button className="btn primary" onClick={run} disabled={busy || !q.trim()}>
+            {busy ? "Searching…" : "Search"}
+          </button>
+        </label>
+        <div className="row chips">
           {(["both", "said", "shown"] as Mode[]).map((m) => (
-            <button key={m} className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
-              {m === "both" ? "Both" : m === "said" ? "Said" : "Shown"}
+            <button key={m} className={`chip${mode === m ? " on" : ""}`} onClick={() => setMode(m)}>
+              {mode === m && <Icon name="check" size={18} />}
+              {m === "both" ? "Said + shown" : m === "said" ? "Said" : "Shown"}
             </button>
           ))}
+          <span className="grow" />
+          <SourceFilter value={src} onChange={setSrc} />
         </div>
-        <SourceFilter value={src} onChange={setSrc} />
-        <button className="btn primary big" onClick={run} disabled={busy || !q.trim()}>
-          {busy ? "Searching…" : "Search"}
-        </button>
       </div>
       <div className="page">
         <div className="results scroll pad">
