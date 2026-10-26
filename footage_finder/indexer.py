@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from . import tiers
+from .env import NO_WINDOW
 from .sources import open_source
 from .store import Index, register
 
@@ -21,7 +22,7 @@ def load_audio(path: Path, sr=16000):
     out = subprocess.run(
         ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-vn", "-ac", "1", "-ar", str(sr),
          "-f", "f32le", "-"],
-        capture_output=True,
+        capture_output=True, **NO_WINDOW,
     )
     if out.returncode != 0 or not out.stdout:
         raise RuntimeError(out.stderr.decode(errors="replace").strip()[:300] or "no audio track")

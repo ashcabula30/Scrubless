@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .env import NO_WINDOW
+
 VIDEO = {".mov", ".mp4", ".m4v", ".mxf", ".mkv", ".avi", ".mts", ".m2ts", ".webm"}
 
 
@@ -61,7 +63,7 @@ def iter_frames(path: Path, fps: float, side: int, chunk=64):
     cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-an",
            "-vf", f"fps={fps},scale={side}:{side}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = side * side * 3
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **NO_WINDOW)
     n = 0
     try:
         while True:
@@ -182,7 +184,7 @@ class SceneSearcher:
 def save_thumb(path: Path, t: float, out: Path, height=360):
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{t:.2f}", "-i", str(path),
-                    "-frames:v", "1", "-vf", f"scale=-2:{height}", str(out)], check=True)
+                    "-frames:v", "1", "-vf", f"scale=-2:{height}", str(out)], check=True, **NO_WINDOW)
     return out
 
 

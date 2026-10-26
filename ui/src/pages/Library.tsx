@@ -109,32 +109,40 @@ export default function LibraryPage() {
         <div className="col" style={{ gap: 6 }}>
           <h2>Indexed folders</h2>
           {sources.length ? (
-            <table className="table panel">
+            <table className="table panel lib-table">
+              <colgroup>
+                <col />
+                <col className="c-clips" />
+                <col className="c-footage" />
+                <col className="c-preset" />
+                <col className="c-updated" />
+                <col className="c-actions" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Folder</th>
-                  <th>Clips</th>
-                  <th>Footage</th>
-                  <th>Preset</th>
-                  <th>Updated</th>
+                  <th className="c-clips">Clips</th>
+                  <th className="c-footage">Footage</th>
+                  <th className="c-preset">Preset</th>
+                  <th className="c-updated">Updated</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {sources.map((s) => (
                   <tr key={s.id}>
-                    <td style={{ maxWidth: 420 }}>
+                    <td>
                       <div className="row">
                         {s.remote && <span className="badge blue">B2</span>}
-                        <span className="strong">{s.name}</span>
+                        <span className="strong ellipsis" title={s.name}>{s.name}</span>
                         {s.busy && <span className="badge">indexing…</span>}
                       </div>
                       <div className="hint ellipsis" title={s.source}>{s.source}</div>
                     </td>
-                    <td>{s.files}</td>
-                    <td>{s.hours < 1 ? `${Math.round(s.hours * 60)} min` : `${s.hours.toFixed(1)} h`}</td>
-                    <td>{s.tier}</td>
-                    <td className="muted">{ago(s.indexed_at)}</td>
+                    <td className="c-clips">{s.files}</td>
+                    <td className="c-footage">{s.hours < 1 ? `${Math.round(s.hours * 60)} min` : `${s.hours.toFixed(1)} h`}</td>
+                    <td className="c-preset">{s.tier}</td>
+                    <td className="c-updated muted">{ago(s.indexed_at)}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn sm" disabled={s.busy} onClick={() => api.reindex(s.id).then((j) => track(j.id))}>
                         Update

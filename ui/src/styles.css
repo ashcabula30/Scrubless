@@ -327,6 +327,19 @@ kbd {
 .table td:first-child { border-radius: var(--r-l) 0 0 var(--r-l); }
 .table td:last-child { border-radius: 0 var(--r-l) var(--r-l) 0; }
 .table tr:hover td { background: var(--surface-high); }
+/* Library table: fixed columns so long paths get "…" instead of pushing under the Jobs panel;
+   less important columns drop out as the content area narrows. */
+.results { container-type: inline-size; }
+.lib-table { table-layout: fixed; }
+.lib-table .c-clips { width: 64px; }
+.lib-table .c-footage { width: 86px; }
+.lib-table .c-preset { width: 72px; }
+.lib-table .c-updated { width: 96px; white-space: nowrap; }
+.lib-table .c-actions { width: 196px; }
+/* all columns need ~740px (514px fixed + a readable folder column) */
+@container (max-width: 740px) { .lib-table .c-preset, .lib-table .c-updated { display: none; } }
+@container (max-width: 560px) { .lib-table .c-footage { display: none; } }
+
 /* M3 Expressive wavy progress (Riff's squiggly scrubber), lavender wave on a flat track */
 .progress { position: relative; height: 10px; border-radius: var(--r-full); overflow: hidden;
   background: linear-gradient(var(--secondary-container), var(--secondary-container)) center / 100% 4px no-repeat; }

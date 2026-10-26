@@ -8,7 +8,7 @@ import hashlib
 import subprocess
 from pathlib import Path
 
-from .env import DATA_DIR
+from .env import DATA_DIR, NO_WINDOW
 from .sources import fetch_to, is_remote
 
 PREVIEWS = DATA_DIR / "previews"
@@ -36,7 +36,7 @@ def _encode(src: Path, start: float, length: float, out: Path, codec: str) -> bo
     cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{start:.3f}", "-i", str(src),
            "-t", f"{length:.3f}", "-vf", SCALE, *venc, "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", str(out)]
-    return subprocess.run(cmd, capture_output=True).returncode == 0 and out.exists() and out.stat().st_size > 0
+    return subprocess.run(cmd, capture_output=True, **NO_WINDOW).returncode == 0 and out.exists() and out.stat().st_size > 0
 
 
 def preview(location: str, start: float, end: float) -> Path:
@@ -72,5 +72,5 @@ def still(location: str, t: float, height=360, index=None, rel=None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     src = local_path(location)
     subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(src),
-                    "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(out)], check=True)
+                    "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(out)], check=True, **NO_WINDOW)
     return out

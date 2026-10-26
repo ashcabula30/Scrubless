@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
+from .env import NO_WINDOW
+
 PAD_IN, PAD_OUT = 0.15, 0.25        # breathing room around a spoken line (seconds)
 BROLL_MIN, BROLL_MAX = 1.5, 4.0     # b-roll-only shot length
 WORDS_PER_SEC = 2.6                 # for estimating gaps when nothing matched
@@ -18,7 +20,7 @@ WORDS_PER_SEC = 2.6                 # for estimating gaps when nothing matched
 def probe(path: Path):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],
-        capture_output=True, text=True, check=True).stdout
+        capture_output=True, text=True, check=True, **NO_WINDOW).stdout
     info = json.loads(out)
     v = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
     a = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)

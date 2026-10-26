@@ -5,6 +5,9 @@ import sys
 from pathlib import Path
 
 # Internal NTFS SSD. Not E: (external exFAT: no journaling, may be unplugged) and not C: (nearly full).
+# Pass to subprocess calls: without it, each ffmpeg/ffprobe started from the windowless app flashes a console.
+NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
+
 DATA_DIR = Path(os.environ.get("FF_DATA", r"D:\footage-finder-data"))
 
 
