@@ -141,6 +141,58 @@ def _on_drop(window, e):
                 _toast(window, f"Couldn't add {path}: {ex}", True)
 
 
+PID_FILE = DATA_DIR / "app.pid"
+_mutex = None  # kept open for the life of the process
+
+
+def _claim_single_instance() -> bool:
+    """True if this is the first Scrubless. A named mutex can't race the way a window search can:
+    two quick double-clicks used to start two copies that both failed to open a window."""
+    global _mutex
+    if sys.platform != "win32":
+        return True
+    import ctypes
+
+    k = ctypes.windll.kernel32
+    _mutex = k.CreateMutexW(None, False, "Local\\" + APP_ID)
+    return k.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+
+
+def _defer_to_running_copy() -> bool:
+    """Another copy owns the app: bring its window forward. If it never shows one (stuck), end it."""
+    for _ in range(40):  # it may still be opening its window: wait up to ~20 s
+        hwnd = _find_window()
+        if hwnd:
+            _bring_to_front(hwnd)
+            return True
+        time.sleep(0.5)
+    try:
+        pid = int(PID_FILE.read_text())
+        if pid != os.getpid():
+            print(f"Earlier copy (pid {pid}) never showed a window; ending it.")
+            os.kill(pid, 9)
+            time.sleep(1)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return False
+
+
+SPLASH = """<!doctype html><html><body style="margin:0;height:100vh;display:flex;flex-direction:column;
+align-items:center;justify-content:center;gap:18px;font:500 15px 'Google Sans','Segoe UI',sans-serif;color:#cac4d0;
+background:radial-gradient(65% 60% at 18% -5%,rgba(124,92,224,.62),transparent 72%),#121214">
+<img src="data:image/svg+xml;base64,{logo}" width="88" style="animation:s 1.6s cubic-bezier(.34,1.56,.64,1) infinite alternate">
+<div>Starting Scrubless…</div><style>@keyframes s{{from{{transform:rotate(-8deg) scale(.94)}}to{{transform:rotate(8deg) scale(1.04)}}}}</style>
+</body></html>"""
+
+
+def _splash():
+    import base64
+
+    logo = Path(__file__).with_name("static") / "logo.svg"
+    data = base64.b64encode(logo.read_bytes()).decode() if logo.exists() else ""
+    return SPLASH.format(logo=data)
+
+
 def main():
     import webview
     from webview.dom import DOMEventHandler
@@ -148,28 +200,36 @@ def main():
     _log_to_file()
     _set_app_id()
 
-    # One window: if Scrubless is already open, bring it forward instead.
-    existing = _find_window()
-    if existing and running():
-        _bring_to_front(existing)
+    if not _claim_single_instance() and _defer_to_running_copy():
         return
+    PID_FILE.write_text(str(os.getpid()))
 
     if not running():
         threading.Thread(target=server.serve, daemon=True).start()
-        for _ in range(100):  # up to ~20 s for the server to come up
-            if running():
-                break
-            time.sleep(0.2)
 
+    # The window opens straight away with a "Starting…" screen; the models take ~10 s to load and
+    # a blank wait made it look like nothing happened (so people clicked again).
     g = _load_geometry()
-    window = webview.create_window(TITLE, URL, width=g["width"], height=g["height"], x=g.get("x"), y=g.get("y"),
-                                   min_size=(960, 640), background_color="#1e1e1e", text_select=True)
+    window = webview.create_window(TITLE, html=_splash(), width=g["width"], height=g["height"], x=g.get("x"),
+                                   y=g.get("y"), min_size=(960, 640), background_color="#121214", text_select=True)
     server.WINDOW = window
+
+    def open_app():
+        for _ in range(300):  # up to ~60 s
+            if running():
+                window.load_url(URL)
+                return
+            time.sleep(0.2)
+        window.load_html("<body style='background:#121214;color:#f2b8b5;font:15px Segoe UI;padding:40px'>"
+                         f"Scrubless couldn't start its engine. Details are in {DATA_DIR / 'app.log'}</body>")
 
     def on_shown():
         _set_window_icon(_find_window())
+        threading.Thread(target=open_app, daemon=True).start()
 
     def on_loaded():
+        if not (window.get_current_url() or "").startswith(URL):
+            return  # the splash screen
         doc = window.dom.document
         doc.events.dragover += DOMEventHandler(lambda e: None, prevent_default=True)
         doc.events.drop += DOMEventHandler(lambda e: _on_drop(window, e), prevent_default=True)

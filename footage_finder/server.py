@@ -582,6 +582,16 @@ def b2_ls(uri: str = ""):
     return {"uri": src.uri, "folders": folders, "files": len(files)}
 
 
+@app.middleware("http")
+async def no_stale_ui(request, call_next):
+    """WebView2 kept serving the old index.html (and its old assets) after an update, so the
+    app looked unchanged. Hashed files under /assets/ can be cached; everything else re-checks."""
+    response = await call_next(request)
+    if not request.url.path.startswith(("/assets/", "/api/thumb")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 if STATIC.is_dir():
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")
 

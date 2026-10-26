@@ -2,7 +2,7 @@
 ; Installs for the current user (no admin): program files in %LOCALAPPDATA%\Programs\Scrubless,
 ; the Python environment, AI models and search data in a data folder the user picks (D: by default).
 
-#define AppVersion "0.5.0"
+#define AppVersion "0.5.2"
 #define Root ".."
 
 [Setup]
