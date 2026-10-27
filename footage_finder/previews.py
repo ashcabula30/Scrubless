@@ -5,10 +5,9 @@ HEVC extension, so a match is cut into a short H.264 clip with the GPU encoder (
 Everything is cached under DATA_DIR, keyed by file + time range.
 """
 import hashlib
-import subprocess
 from pathlib import Path
 
-from .env import DATA_DIR, NO_WINDOW
+from .env import DATA_DIR, ffmpeg
 from .sources import fetch_to, is_remote
 
 PREVIEWS = DATA_DIR / "previews"
@@ -33,10 +32,10 @@ def local_path(location: str) -> Path:
 def _encode(src: Path, start: float, length: float, out: Path, codec: str) -> bool:
     venc = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "27"] if codec == "nvenc" \
         else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26"]
-    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{start:.3f}", "-i", str(src),
-           "-t", f"{length:.3f}", "-vf", SCALE, *venc, "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", str(out)]
-    return subprocess.run(cmd, capture_output=True, **NO_WINDOW).returncode == 0 and out.exists() and out.stat().st_size > 0
+    args = ["-v", "error", "-nostdin", "-y", "-ss", f"{start:.3f}", "-i", str(src),
+            "-t", f"{length:.3f}", "-vf", SCALE, *venc, "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", str(out)]
+    return ffmpeg(args, capture_output=True).returncode == 0 and out.exists() and out.stat().st_size > 0
 
 
 def preview(location: str, start: float, end: float) -> Path:
@@ -71,6 +70,6 @@ def still(location: str, t: float, height=360, index=None, rel=None) -> Path:
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
     src = local_path(location)
-    subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(src),
-                    "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(out)], check=True, **NO_WINDOW)
+    ffmpeg(["-v", "error", "-nostdin", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(src),
+            "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(out)], capture_output=True).check_returncode()
     return out

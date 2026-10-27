@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import env
 from .env import NO_WINDOW
 
 VIDEO = {".mov", ".mp4", ".m4v", ".mxf", ".mkv", ".avi", ".mts", ".m2ts", ".webm"}
@@ -58,9 +59,9 @@ class Vision:
         return 1 / (1 + np.exp(-(np.asarray(cos) * scale + bias)))
 
 
-def iter_frames(path: Path, fps: float, side: int, chunk=64):
-    """Yield (times, frames) chunks, decoded and squashed to side x side by FFmpeg."""
-    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-an",
+def iter_frames(path: Path, fps: float, side: int, chunk=64, hw=False):
+    """Yield (times, frames) chunks, decoded (on the GPU if hw) and squashed to side x side by FFmpeg."""
+    cmd = ["ffmpeg", *(env.HWDEC if hw else []), "-v", "error", "-nostdin", "-i", str(path), "-an",
            "-vf", f"fps={fps},scale={side}:{side}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = side * side * 3
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **NO_WINDOW)
@@ -97,16 +98,30 @@ def embed_file(vis, path: Path, fps: float, keep_thumbs=False, thumb_h=240):
     from PIL import Image
 
     aspect = display_aspect(path) if keep_thumbs else None
-    times, embs, thumbs = [], [], []
-    for t, frames in iter_frames(path, fps, vis.side):
-        times.extend(t)
-        embs.append(vis.embed_images(frames))
-        if keep_thumbs:
-            for f in frames:
-                buf = io.BytesIO()
-                Image.fromarray(f).resize((max(1, round(thumb_h * aspect)), thumb_h)).save(buf, "JPEG", quality=72)
-                thumbs.append(buf.getvalue())
-    return times, np.concatenate(embs), thumbs
+
+    def run(hw):
+        times, embs, thumbs = [], [], []
+        for t, frames in iter_frames(path, fps, vis.side, hw=hw):
+            times.extend(t)
+            embs.append(vis.embed_images(frames))
+            if keep_thumbs:
+                for f in frames:
+                    buf = io.BytesIO()
+                    Image.fromarray(f).resize((max(1, round(thumb_h * aspect)), thumb_h)).save(buf, "JPEG", quality=72)
+                    thumbs.append(buf.getvalue())
+        return times, np.concatenate(embs), thumbs
+
+    if env.hwdec_ok is not False:
+        try:
+            out = run(hw=True)
+            env.hwdec_ok = True
+            return out
+        except RuntimeError:  # no frames on the GPU path: retry on the CPU below
+            pass
+    out = run(hw=False)
+    if env.hwdec_ok is None:
+        env.hwdec_ok = False
+    return out
 
 
 _VISION = {}  # shared by every SceneSearcher, so the app loads each model once
@@ -183,8 +198,8 @@ class SceneSearcher:
 
 def save_thumb(path: Path, t: float, out: Path, height=360):
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{t:.2f}", "-i", str(path),
-                    "-frames:v", "1", "-vf", f"scale=-2:{height}", str(out)], check=True, **NO_WINDOW)
+    env.ffmpeg(["-v", "error", "-nostdin", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+                "-frames:v", "1", "-vf", f"scale=-2:{height}", str(out)], capture_output=True).check_returncode()
     return out
 
 
