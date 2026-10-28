@@ -22,7 +22,7 @@ function JobRow({ j }: { j: Job }) {
         <span className={`badge ${badge}`}>{j.status}</span>
         <span className="strong ellipsis grow" title={j.title}>{j.title}</span>
         {running && j.total > 0 && (
-          <span className="muted small">
+          <span className="muted small" style={{ whiteSpace: "nowrap", flex: "none" }}>
             {j.n} / {j.total}
           </span>
         )}

@@ -4,7 +4,7 @@
 
 # Scrubless
 
-[![Runs](https://img.shields.io/badge/RUNS-100%25%20LOCAL-2D9D78?style=for-the-badge&labelColor=555555)](#-privacy) [![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=555555)](#-system-requirements) [![Editor](https://img.shields.io/badge/EDITOR-PREMIERE%20PRO-9999FF?style=for-the-badge&logo=adobepremierepro&logoColor=white&labelColor=555555)](#-brief--rough-cut) [![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows11&logoColor=white&labelColor=555555)](#-getting-started) [![Version](https://img.shields.io/badge/VERSION-0.5.5-1473E6?style=for-the-badge&labelColor=555555)](#-roadmap)
+[![Runs](https://img.shields.io/badge/RUNS-100%25%20LOCAL-2D9D78?style=for-the-badge&labelColor=555555)](#-privacy) [![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=555555)](#-system-requirements) [![Editor](https://img.shields.io/badge/EDITOR-PREMIERE%20PRO-9999FF?style=for-the-badge&logo=adobepremierepro&logoColor=white&labelColor=555555)](#-brief--rough-cut) [![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows11&logoColor=white&labelColor=555555)](#-getting-started) [![Version](https://img.shields.io/badge/VERSION-0.6.2-1473E6?style=for-the-badge&labelColor=555555)](#-roadmap)
 
 > Stop scrubbing through footage. Scrubless listens to and watches every clip once, on your own GPU, then finds the exact take where a line is said or a shot appears, in under a second. Paste a brief, pick your takes, and get a Premiere rough cut.
 

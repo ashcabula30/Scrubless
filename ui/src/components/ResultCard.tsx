@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Result, tc, thumbUrl } from "../api";
+import Icon from "../icons";
 
 type Props = {
   r: Result;
@@ -8,13 +10,20 @@ type Props = {
   compact?: boolean;
 };
 
+const AUDIO = /\.(wav|mp3|m4a|aac|flac)$/i;
+
 export default function ResultCard({ r, selected, picked, onClick, compact }: Props) {
+  const [noPicture, setNoPicture] = useState(AUDIO.test(r.file)); // voiceovers, music: no frame to show
   const cls = `card${selected ? " sel" : ""}${picked ? " picked" : ""}`;
   const at = r.kind === "said" ? r.start : r.peak ?? r.start;
   return (
     <div className={cls} onClick={onClick} title={r.location}>
-      <div className="thumb">
-        <img src={thumbUrl(r, compact ? 240 : 360)} loading="lazy" alt="" />
+      <div className={`thumb${noPicture ? " audio" : ""}`}>
+        {noPicture ? (
+          <Icon name="audio" size={44} />
+        ) : (
+          <img src={thumbUrl(r, compact ? 240 : 360)} loading="lazy" alt="" onError={() => setNoPicture(true)} />
+        )}
         <span className="tc">{tc(at)}</span>
         <span className="corner">
           {r.remote && <span className="badge blue">B2</span>}

@@ -90,7 +90,11 @@ class Index:
         )
         self.db.commit()
 
-    # Small JPGs of sampled frames, kept for remote sources so contact sheets need no download.
+    # Small JPGs of the sampled frames: result thumbnails and contact sheets without running ffmpeg.
+    def has_thumbs(self, rel):
+        d = self._thumb_dir(rel)
+        return d.is_dir() and any(d.iterdir())
+
     def _thumb_dir(self, rel):
         import hashlib
 

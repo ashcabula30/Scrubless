@@ -5,6 +5,7 @@ HEVC extension, so a match is cut into a short H.264 clip with the GPU encoder (
 Everything is cached under DATA_DIR, keyed by file + time range.
 """
 import hashlib
+import threading
 from pathlib import Path
 
 from .env import DATA_DIR, ffmpeg
@@ -38,14 +39,27 @@ def _encode(src: Path, start: float, length: float, out: Path, codec: str) -> bo
     return ffmpeg(args, capture_output=True).returncode == 0 and out.exists() and out.stat().st_size > 0
 
 
+_locks = {}  # one lock per preview file: the background prefetch and a click can ask for the same one
+_locks_guard = threading.Lock()
+
+
 def preview(location: str, start: float, end: float) -> Path:
     """H.264 preview of start..end with a little lead-in and tail."""
-    global _nvenc_ok
     a = max(0.0, start - LEAD)
     length = min(MAX_LEN, max(1.0, end + TAIL - a))
     out = PREVIEWS / f"{_key(location, round(a, 2), round(length, 2))}.mp4"
     if out.exists():
         return out
+    with _locks_guard:
+        lock = _locks.setdefault(out.name, threading.Lock())
+    with lock:
+        if out.exists():  # made by whoever held the lock
+            return out
+        return _make_preview(location, a, length, out)
+
+
+def _make_preview(location, a, length, out):
+    global _nvenc_ok
     out.parent.mkdir(parents=True, exist_ok=True)
     src = local_path(location)
     tmp = out.with_suffix(".part.mp4")
@@ -60,8 +74,8 @@ def preview(location: str, start: float, end: float) -> Path:
 
 
 def still(location: str, t: float, height=360, index=None, rel=None) -> Path:
-    """One frame as JPG. Backblaze files use frames stored at index time when there are any."""
-    if is_remote(location) and index is not None and rel is not None:
+    """One frame as JPG: the nearest frame stored at index time, else extracted with ffmpeg."""
+    if index is not None and rel is not None:
         stored = index.thumb(rel, t)
         if stored is not None:
             return stored

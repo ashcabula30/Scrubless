@@ -359,7 +359,32 @@ def search(req: SearchReq):
         sb = bases()
         said = [hit_dict(h, sb) for h in speech.find(q, req.top, req.min)] if want_said else []
         shown = [scene_dict(s, sb) for s in scenes.find(q, req.top)] if want_shown and scenes else []
+    prefetch_previews([*said[:3], *shown[:2]])
     return {"said": said, "shown": shown, "ms": int((time.time() - t0) * 1000)}
+
+
+_prefetch = {"gen": 0}
+
+
+def prefetch_previews(results):
+    """Encode previews of the top results in the background, so the first clicks play at once
+    (each preview takes ~2-3 s to encode). A newer search stops the older prefetch."""
+    from .previews import preview
+
+    _prefetch["gen"] += 1
+    gen = _prefetch["gen"]
+    todo = [r for r in results if not r["remote"]]  # remote previews would download the whole clip
+
+    def run():
+        for r in todo:
+            if _prefetch["gen"] != gen:
+                return
+            try:
+                preview(r["location"], r["start"], r["end"])
+            except Exception:
+                pass  # the click will try again and show the error
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 @app.post("/api/brief")
@@ -380,6 +405,7 @@ def brief(req: BriefReq):
                 "shown": [scene_dict(s, sb) for s in scenes.find(visual_query(it["show"]), req.top)]
                 if it["show"] and scenes else [],
             })
+    prefetch_previews([l["said"][0] for l in out if l["said"]][:4])  # the picked takes of the first lines
     return {"lines": out, "ms": int((time.time() - t0) * 1000)}
 
 
@@ -478,10 +504,13 @@ def preview(loc: str, start: float, end: float):
 
 @app.get("/api/thumb")
 def thumb(loc: str, t: float, src: str | None = None, h: int = 360):
+    from .indexer import VIDEO
     from .previews import still
 
     if not allowed(loc):
         raise HTTPException(403, "Not in an indexed folder")
+    if Path(loc).suffix.lower() not in VIDEO:  # voiceovers and music: no picture (the card shows an audio tile)
+        raise HTTPException(404, "Audio only")
     idx = None
     rel = None
     if src and src in indexed():

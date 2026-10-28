@@ -161,23 +161,27 @@ class SceneSearcher:
             idx = Index(f)
             frames, embs = idx.load_frames()
             if frames:
+                # load_frames sorts by file then time, so each file is one contiguous slice: find them once.
+                bounds = [0] + [i for i in range(1, len(frames)) if frames[i][0] != frames[i - 1][0]] + [len(frames)]
+                files = [(frames[a][0], a, b) for a, b in zip(bounds, bounds[1:])]
                 self.parts.append((idx, idx.get_meta("vision"), float(idx.get_meta("vision_fps") or 1),
-                                   frames, embs))
+                                   frames, embs, files))
 
     def _vision(self, model_id):
         return vision_model(model_id)
 
     def find(self, query: str, top=10, spread=0.02):
         scenes = []
-        for idx, model_id, fps, frames, embs in self.parts:
+        q_emb = {}  # one model run per search, not one per indexed folder
+        for idx, model_id, fps, frames, embs, files in self.parts:
             vis = self._vision(model_id)
-            sims = embs @ vis.embed_text(query)
+            if model_id not in q_emb:
+                q_emb[model_id] = vis.embed_text(query)
+            sims = embs @ q_emb[model_id]
             # Group each file's frames into contiguous runs around its best-matching moments.
-            by_file = {}
-            for i, (rel, _) in enumerate(frames):
-                by_file.setdefault(rel, []).append(i)
-            for rel, ids in by_file.items():
-                s = sims[ids]
+            for rel, a, b in files:
+                ids = range(a, b)
+                s = sims[a:b]
                 taken = np.zeros(len(ids), bool)
                 for _ in range(3):  # up to 3 separate moments per file
                     cand = np.where(taken, -np.inf, s)

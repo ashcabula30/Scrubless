@@ -228,6 +228,7 @@ kbd {
 }
 /* filled like album art; the preview player shows the full frame */
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform var(--t-m3); }
+.thumb.audio { background: var(--secondary-container); color: var(--primary); }
 .thumb .tc {
   position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: var(--r-full); font-size: 11px; font-weight: 500;
   background: rgba(18, 18, 20, 0.72); backdrop-filter: blur(8px); color: #fff;

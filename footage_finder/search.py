@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass
 import numpy as np
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 from .sources import join
 from .store import Index
@@ -64,7 +64,7 @@ class Searcher:
             idx = Index(f)
             segs, embs = idx.load_segments()
             if segs:
-                self.parts.append((idx.base, idx.get_meta("embed"), segs, embs))
+                self.parts.append(_prepare(idx.base, idx.get_meta("embed"), segs, embs))
 
     def _embed(self, model_name, text):
         return embedder(model_name).encode([text], normalize_embeddings=True)[0]
@@ -75,29 +75,39 @@ class Searcher:
             return []
         hits = []
         meaning_query = PLACEHOLDER.sub(" ", query)
-        for base, embed_name, segs, embs in self.parts:
-            sem = embs @ self._embed(embed_name, meaning_query)
-            for i, seg in enumerate(segs):
-                # Score the segment alone and joined with the next one (lines often span two).
-                cands = [(seg["words"], seg["text"], sem[i])]
-                if i + 1 < len(segs) and segs[i + 1]["file"] == seg["file"]:
-                    nxt = segs[i + 1]
-                    cands.append((seg["words"] + nxt["words"], seg["text"] + " " + nxt["text"],
-                                  (sem[i] + sem[i + 1]) / 2))
-                for words, text, s in cands:
-                    tn = normalize(text)
-                    # partial_ratio finds the line inside a longer one; a shorter candidate
-                    # ("Oh") must match as a whole or it scores high on almost anything.
-                    fz = (fuzz.partial_ratio(qn, tn) if len(tn) >= 0.8 * len(qn) else fuzz.ratio(qn, tn)) / 100
-                    score = 0.65 * fz + 0.35 * max(float(s), 0.0)
-                    if score < min_score:
-                        continue
-                    for start, end, matched, r in _windows(qn, words, seg):
+        q_emb = {}  # one model run per search, not one per indexed folder
+        for p in self.parts:
+            segs, nxt = p["segs"], p["nxt"]
+            if p["embed"] not in q_emb:
+                q_emb[p["embed"]] = self._embed(p["embed"], meaning_query)
+            sem = p["embs"] @ q_emb[p["embed"]]
+            sem_next = np.append(sem[1:], 0.0)
+            # Each segment alone, and joined with the next one in the same clip (lines often span two).
+            for texts, lens, s_vec, joined in ((p["norms"], p["lens"], sem, False),
+                                               (p["pair_norms"], p["pair_lens"], (sem + sem_next) / 2, True)):
+                # partial_ratio finds the line inside a longer one; a shorter candidate ("Oh")
+                # must match as a whole or it scores high on almost anything. Scored in one batch.
+                partial = process.cdist([qn], texts, scorer=fuzz.partial_ratio)[0]
+                whole = process.cdist([qn], texts, scorer=fuzz.ratio)[0]
+                fz = np.where(lens >= 0.8 * len(qn), partial, whole) / 100
+                score = 0.65 * fz + 0.35 * np.maximum(s_vec, 0.0)
+                if joined:
+                    score[~nxt] = -1.0
+                for i in np.nonzero(score >= min_score)[0]:
+                    seg = segs[i]
+                    if joined:
+                        after = segs[i + 1]
+                        words, nwords = seg["words"] + after["words"], seg["nwords"] + after["nwords"]
+                        text = seg["text"] + " " + after["text"]
+                    else:
+                        words, nwords, text = seg["words"], seg["nwords"], seg["text"]
+                    s = max(float(s_vec[i]), 0.0)
+                    for start, end, matched, r in _windows(qn, words, nwords, seg):
                         # Half the text score comes from this exact stretch, so a repeated
                         # take inside one segment is judged on its own words.
-                        sc = 0.65 * (fz + r) / 2 + 0.35 * max(float(s), 0.0)
+                        sc = 0.65 * (fz[i] + r) / 2 + 0.35 * s
                         if sc >= min_score:
-                            hits.append(Hit(base, seg["file"], start, end, matched or text, sc))
+                            hits.append(Hit(p["base"], seg["file"], start, end, matched or text, float(sc)))
         hits = _dedupe(hits)
         _number_takes(hits)
         hits.sort(key=lambda h: -h.score)
@@ -109,11 +119,25 @@ def _join(words):
     return re.sub(r"\s+(?=[.,!?;:%])|(?<=\b[ap])\s+(?=\.m\.)", "", text)
 
 
-def _windows(qn, words, seg):
+def _prepare(base, embed, segs, embs):
+    """Normalise every transcript line once at load, so a search only scores (it used to
+    re-normalise ~16,000 strings per query)."""
+    nxt = np.array([i + 1 < len(segs) and segs[i + 1]["file"] == s["file"] for i, s in enumerate(segs)], bool)
+    norms = [normalize(s["text"]) for s in segs]
+    pair_norms = [normalize(s["text"] + " " + segs[i + 1]["text"]) if nxt[i] else "" for i, s in enumerate(segs)]
+    for s in segs:
+        s["nwords"] = [normalize(w[2]) for w in s["words"]]
+    return {"base": base, "embed": embed, "segs": segs, "embs": embs, "nxt": nxt,
+            "norms": norms, "lens": np.array([len(t) for t in norms]),
+            "pair_norms": pair_norms, "pair_lens": np.array([len(t) for t in pair_norms])}
+
+
+def _windows(qn, words, nwords, seg):
     """Narrow a match to the word stretches that best line up with the query.
 
     Returns every non-overlapping stretch close to the best one, so a line said twice
     in one breath gives two takes. Each item: (start, end, text, ratio 0-1).
+    nwords: the words already normalised (joining them equals normalising the joined text).
     """
     if not words:
         return [(seg["start"], seg["end"], None, 0.0)]
@@ -122,7 +146,7 @@ def _windows(qn, words, seg):
     for size in range(max(1, n - 3), n + 4):
         for i in range(0, max(1, len(words) - size + 1)):
             j = min(i + size, len(words))
-            scored.append((fuzz.ratio(qn, normalize(_join(words[i:j]))), i, j))
+            scored.append((fuzz.ratio(qn, " ".join(w for w in nwords[i:j] if w)), i, j))
     scored.sort(key=lambda x: -x[0])
     best = scored[0][0]
     picked = []

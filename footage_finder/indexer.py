@@ -62,17 +62,21 @@ class Models:
                                          compute_type=self.cfg["compute"])
         return self._whisper
 
+    # The app's search already holds these models: share them. Indexing used to load second copies
+    # (~3 GB of graphics memory), which pushed a 16 GB card into swapping and slowed everything down.
     def embedder(self):
         if self._embedder is None:
-            self._embedder = load_embedder(self.cfg["embed"], self.cfg["device"])
+            from .search import embedder
+
+            self._embedder = embedder(self.cfg["embed"])
         return self._embedder
 
     def vision(self):
         if self._vision is None:
-            from .visual import Vision
+            from .visual import vision_model
 
             self.log("Loading vision model (the first run downloads it)...")
-            self._vision = Vision(self.cfg["vision"], self.cfg["device"])
+            self._vision = vision_model(self.cfg["vision"])
         return self._vision
 
 
@@ -133,8 +137,9 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
         idx.remove_vfile(rel)
 
     need_speech = {r for r, st in listing.items() if speech_state.get(r) != st}
+    # Files indexed before thumbnails were stored for every folder get their frames redone once.
     need_visual = {r for r, st in listing.items()
-                   if visual and Path(r).suffix.lower() in VIDEO and vis_state.get(r) != st}
+                   if visual and Path(r).suffix.lower() in VIDEO and (vis_state.get(r) != st or not idx.has_thumbs(r))}
     todo = sorted(need_speech | need_visual)
     gb = sum(listing[r][0] for r in todo) / 1e9
     log(f"{len(listing)} media files, {len(todo)} new or changed"
@@ -170,7 +175,8 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
             from .visual import embed_file
 
             try:
-                times, embs, thumbs = embed_file(models.vision(), path, cfg["fps"], keep_thumbs=src.remote)
+                # Small JPGs of the sampled frames: result cards show these instead of running ffmpeg per card.
+                times, embs, thumbs = embed_file(models.vision(), path, cfg["fps"], keep_thumbs=True)
                 idx.put_vfile(rel, size, mtime, times, embs)
                 if thumbs:
                     idx.put_thumbs(rel, times, thumbs)
