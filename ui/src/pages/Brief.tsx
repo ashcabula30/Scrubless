@@ -3,6 +3,7 @@ import { api, BriefLine, Job, Result } from "../api";
 import { useApp } from "../App";
 import ResultCard from "../components/ResultCard";
 import PreviewPlayer from "../components/PreviewPlayer";
+import ClickUpPicker from "../components/ClickUpPicker";
 import { SourceFilter } from "./Search";
 import { emptyRow, Row, rowsFromHtml, rowsFromTableText } from "../briefParse";
 
@@ -17,9 +18,9 @@ const SIZES: Record<string, [number, number]> = {
 };
 
 const EXAMPLE: Row[] = [
-  { label: "Hook", script: "I literally can't stop drinking this tea.", visual: "Creator holding the mug, talking to camera" },
-  { label: "Body", script: "It tastes like dessert but there's no sugar in it.", visual: "Hand pouring tea into a glass, close-up" },
-  { label: "CTA", script: "Grab yours at the link below.", visual: "On-screen text: LINK BELOW" },
+  { label: "Hook", script: "I literally can't stop drinking this tea.", visual: "Creator holding the mug, talking to camera", text: "" },
+  { label: "Body", script: "It tastes like dessert but there's no sugar in it.", visual: "Hand pouring tea into a glass, close-up", text: "" },
+  { label: "CTA", script: "Grab yours at the link below.", visual: "End card", text: "LINK BELOW" },
 ];
 
 function store(key: string, value: string) {
@@ -33,14 +34,16 @@ function store(key: string, value: string) {
 function loadRows(): Row[] {
   try {
     const r = JSON.parse(localStorage.getItem("ff.briefRows") ?? "null");
-    if (Array.isArray(r) && r.length) return r;
+    if (Array.isArray(r) && r.length) return r.map(fill); // briefs saved before the On-screen text column
   } catch {
     /* ignore */
   }
   return [emptyRow(), emptyRow(), emptyRow()];
 }
 
-const isBlank = (rows: Row[]) => rows.every((r) => !r.label.trim() && !r.script.trim() && !r.visual.trim());
+const fill = (r: Partial<Row>): Row => ({ ...emptyRow(), ...r, text: r.text ?? "" });
+
+const isBlank = (rows: Row[]) => rows.every((r) => !r.label.trim() && !r.script.trim() && !r.visual.trim() && !r.text.trim());
 
 /** Textarea that grows with its content, like a ClickUp table cell. */
 function Cell({ value, onChange, placeholder, strong }: { value: string; onChange: (v: string) => void; placeholder?: string; strong?: boolean }) {
@@ -79,6 +82,7 @@ export default function BriefPage() {
   const [size, setSize] = useState(Object.keys(SIZES)[0]);
   const [outDir, setOutDir] = useState(() => localStorage.getItem("ff.outdir") ?? "");
   const [jobId, setJobId] = useState<string | null>(null);
+  const [showClickUp, setShowClickUp] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => store("ff.briefRows", JSON.stringify(rows)), [rows]);
@@ -86,9 +90,10 @@ export default function BriefPage() {
   const job: Job | undefined = jobs.find((j) => j.id === jobId);
 
   // ---------- getting a brief in ----------
-  const useRows = (incoming: Row[], how: string) => {
+  const useRows = (incoming: Partial<Row>[], how: string) => {
     if (!incoming.length) return toast(`Couldn't find any brief rows in that ${how}.`, true);
-    setRows((cur) => (isBlank(cur) ? incoming : [...cur.filter((r) => r.label || r.script || r.visual), ...incoming]));
+    const next = incoming.map(fill);
+    setRows((cur) => (isBlank(cur) ? next : [...cur.filter((r) => !isBlank([r])), ...next]));
     toast(`${incoming.length} row${incoming.length === 1 ? "" : "s"} added from the ${how}`);
   };
 
@@ -244,10 +249,13 @@ export default function BriefPage() {
           <div className="col grow" style={{ gap: 2 }}>
             <h1>Brief</h1>
             <span className="hint">
-              Copy the brief table in ClickUp and press <kbd>Ctrl</kbd>+<kbd>V</kbd> here, or paste / drop a screenshot of it.
-              You can also type in the table.
+              Import it from ClickUp, press <kbd>Ctrl</kbd>+<kbd>V</kbd> with a copied brief table or screenshot, or type in the
+              table.
             </span>
           </div>
+          <button className="btn primary" onClick={() => setShowClickUp(true)}>
+            From ClickUp
+          </button>
           <button className="btn" onClick={pasteButton} disabled={reading}>
             Paste
           </button>
@@ -270,12 +278,23 @@ export default function BriefPage() {
           </button>
         </div>
         <div className="scroll pad" style={{ flex: "1 1 auto" }}>
+          {showClickUp && (
+            <ClickUpPicker
+              onClose={() => setShowClickUp(false)}
+              onImport={({ rows: incoming, task }) => {
+                setRows(incoming.map(fill)); // an imported brief replaces the table
+                setName([task.client, task.name].filter(Boolean).join(" "));
+                toast(`Imported ${incoming.length} row${incoming.length === 1 ? "" : "s"} from “${task.name}”`);
+              }}
+            />
+          )}
           {reading && <div className="reading">Reading the screenshot…</div>}
           <table className="brief-table">
             <colgroup>
-              <col style={{ width: 150 }} />
+              <col style={{ width: 130 }} />
               <col />
               <col />
+              <col style={{ width: "22%" }} />
               <col style={{ width: 34 }} />
             </colgroup>
             <thead>
@@ -283,6 +302,7 @@ export default function BriefPage() {
                 <th />
                 <th>Script</th>
                 <th>Visual</th>
+                <th>On-screen text</th>
                 <th />
               </tr>
             </thead>
@@ -297,6 +317,9 @@ export default function BriefPage() {
                   </td>
                   <td>
                     <Cell value={r.visual} onChange={(v) => setCell(i, "visual", v)} placeholder="What we see (searched as b-roll)" />
+                  </td>
+                  <td>
+                    <Cell value={r.text} onChange={(v) => setCell(i, "text", v)} placeholder="Text on screen (note for the edit)" />
                   </td>
                   <td className="row-x">
                     <button className="btn ghost sm" title="Delete row" onClick={() => setRows((rs) => (rs.length > 1 ? rs.filter((_, k) => k !== i) : [emptyRow()]))}>
@@ -318,7 +341,7 @@ export default function BriefPage() {
             )}
             <span className="hint grow">
               Blank lines inside a cell split paragraphs; each script paragraph is matched with the visual paragraph beside it.{" "}
-              <span className="mono">{"{placeholders}"}</span> are ignored and “On-screen text:” is kept as a note for the editor.
+              <span className="mono">{"{placeholders}"}</span> are ignored; On-screen text is kept as a note for the editor, not searched.
             </span>
           </div>
         </div>

@@ -12,6 +12,7 @@ from statistics import median
 import numpy as np
 
 SCRIPT_HEAD = re.compile(r"\b(script|vo|voice ?over|dialogue|line|copy|audio)\b", re.I)
+TEXT_HEAD = re.compile(r"\b(on[- ]?screen|ost|supers?|text overlay|captions?)\b", re.I)
 VISUAL_HEAD = re.compile(r"\b(visuals?|shots?|b-?roll|scene|video)\b", re.I)
 
 _engine = None
@@ -90,7 +91,9 @@ def _roles(header_cells):
     """Map column index -> 'label' | 'script' | 'visual' from the header row text."""
     roles = {}
     for i, t in enumerate(header_cells):
-        if VISUAL_HEAD.search(t):
+        if TEXT_HEAD.search(t):
+            roles[i] = "text"
+        elif VISUAL_HEAD.search(t):
             roles[i] = "visual"
         elif SCRIPT_HEAD.search(t):
             roles[i] = "script"
@@ -112,7 +115,7 @@ def _rows_from_cells(table):
     body = table[head_i + 1:] if head_i is not None else table
     rows = []
     for r in body:
-        row = {"label": "", "script": "", "visual": ""}
+        row = {"label": "", "script": "", "visual": "", "text": ""}  # text: the On-screen text column
         for i, text in enumerate(r):
             role = roles.get(i, "other")
             if role in row and text:

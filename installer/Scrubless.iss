@@ -2,7 +2,7 @@
 ; Installs for the current user (no admin): program files in %LOCALAPPDATA%\Programs\Scrubless,
 ; the Python environment, AI models and search data in a data folder the user picks (D: by default).
 
-#define AppVersion "0.6.2"
+#define AppVersion "0.8.0"
 #define Root ".."
 
 [Setup]
@@ -38,6 +38,8 @@ Source: "{#Root}\pyproject.toml"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "{#Root}\uv.lock"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "{#Root}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\footage_finder\*"; DestDir: "{app}\app\footage_finder"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Premiere panel (Window > Extensions > Scrubless). Unsigned, so Premiere needs PlayerDebugMode=1 (see README).
+Source: "{#Root}\footage_finder\panel\*"; DestDir: "{userappdata}\Adobe\CEP\extensions\com.goodostudios.scrubless"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 ; Leftovers from when the app was called Footage Finder (0.3.x)
@@ -58,6 +60,7 @@ Filename: "{app}\Scrubless.exe"; Description: "Open Scrubless"; Flags: postinsta
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{userappdata}\Adobe\CEP\extensions\com.goodostudios.scrubless"
 
 [Code]
 var

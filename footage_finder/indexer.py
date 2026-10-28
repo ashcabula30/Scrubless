@@ -5,6 +5,7 @@ Each file is opened once for both passes, so a Backblaze file is downloaded only
 import gc
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -126,6 +127,8 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
     for k, v in (("source", src.uri), ("tier", tier), ("whisper", cfg["whisper"]), ("embed", cfg["embed"]),
                  ("vision", cfg["vision"]), ("vision_fps", str(cfg["fps"]))):
         idx.set_meta(k, v)
+    if hasattr(src, "title"):  # Iconik collections are ids; keep the human name for the Library
+        idx.set_meta("title", src.title())
 
     log(f"Source: {src.uri}")
     log(f"Preset: {tier}  ({cfg['whisper']} on {cfg['device']})")
@@ -149,7 +152,14 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
         register(src.index_dir)
         return idx.stats()
 
+    from .visual import embed_file
+
     models = Models(cfg, log)
+    if need_visual:
+        models.vision()  # load before the worker thread uses it
+    # The visual pass of a file (video decoder + image model) runs while its speech pass (Whisper) does:
+    # they mostly use different parts of the GPU, so a file takes about as long as the slower pass.
+    pool = ThreadPoolExecutor(max_workers=1)
     t0 = time.time()
     progress({"n": 0, "total": len(todo), "file": todo[0]})
     for n, (rel, path) in enumerate(src.iter_local(todo), 1):
@@ -163,6 +173,7 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
         if isinstance(path, Exception):  # download failed; try again next run
             log(f"  [{n}/{len(todo)}] {rel}  download failed: {str(path)[:120]}")
             continue
+        vis_job = pool.submit(embed_file, models.vision(), path, cfg["fps"], True) if rel in need_visual else None
         if rel in need_speech:
             try:
                 duration, segments, embs = transcribe(models, path, language)
@@ -171,12 +182,10 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
             except Exception as e:  # e.g. a video with no audio track
                 idx.put_file(rel, size, mtime, 0, [], [], error=str(e)[:300])
                 notes.append("no speech/audio")
-        if rel in need_visual:
-            from .visual import embed_file
-
+        if vis_job is not None:
             try:
                 # Small JPGs of the sampled frames: result cards show these instead of running ffmpeg per card.
-                times, embs, thumbs = embed_file(models.vision(), path, cfg["fps"], keep_thumbs=True)
+                times, embs, thumbs = vis_job.result()
                 idx.put_vfile(rel, size, mtime, times, embs)
                 if thumbs:
                     idx.put_thumbs(rel, times, thumbs)
@@ -186,6 +195,7 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
                 notes.append(f"no frames: {str(e)[:80]}")
         log(f"  [{n}/{len(todo)}] {rel}  " + ", ".join(notes))
         progress({"n": n, "total": len(todo), "file": rel})
+    pool.shutdown()
     log(f"Done in {time.time() - t0:.0f}s.")
     del models
     gc.collect()

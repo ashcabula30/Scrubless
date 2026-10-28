@@ -22,6 +22,8 @@ from pydantic import BaseModel
 
 from . import tiers
 from .env import DATA_DIR
+from .clickup import load_token as load_clickup_token
+from .iconik import load_keys as load_iconik_keys
 from .sources import KEYS_FILE, fetch_to, is_remote, open_source
 from .store import INDEX_DIR, Index, load_registry, unregister
 
@@ -70,10 +72,11 @@ def db_mtime(index_dir: Path) -> float:
 
 
 def source_info(sid, index_dir):
-    st = Index(index_dir).stats()
+    idx = Index(index_dir)
+    st = idx.stats()
     base = st["source"]
     return {"id": sid, "source": base, "remote": is_remote(base),
-            "name": base.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1],
+            "name": idx.get_meta("title") or base.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1],
             "files": st["files"], "hours": round(st["hours"], 2), "videos": st["vfiles"],
             "frames": st["vframes"], "tier": st["tier"], "model": st["whisper"],
             "indexed_at": db_mtime(index_dir), "busy": jobs.busy_with(base)}
@@ -239,6 +242,7 @@ class BriefRow(BaseModel):
     label: str = ""
     script: str = ""
     visual: str = ""
+    text: str = ""  # On-screen text
 
 
 class BriefReq(BaseModel):
@@ -295,7 +299,8 @@ def status():
     s = load_settings()
     return {"gpu": f"{gpu[0]} ({gpu[1]:.0f} GB)" if gpu else None, "tier": s["tier"],
             "auto_tier": tiers.detect(), "ready": engine.ready, "data_dir": str(DATA_DIR),
-            "b2_key": key_status(), "b2_bucket": s.get("b2_bucket", ""), "sources": len(indexed())}
+            "b2_key": key_status(), "b2_bucket": s.get("b2_bucket", ""), "sources": len(indexed()),
+            "clickup": bool(load_clickup_token()), "iconik": all(load_iconik_keys())}
 
 
 @app.get("/api/sources")
@@ -307,6 +312,13 @@ def sources():
 @app.post("/api/sources")
 def add_source(req: AddSource):
     path = req.path.strip().strip('"')
+    if "iconik.io" in path:  # a pasted Iconik collection link
+        from .iconik import collection_id_from
+
+        try:
+            path = f"iconik://{collection_id_from(path)}/"
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     if not is_remote(path) and not Path(path).is_dir():
         raise HTTPException(400, f"Folder not found: {path}")
     return jobs.public(jobs.index(path))
@@ -611,6 +623,94 @@ def b2_ls(uri: str = ""):
     return {"uri": src.uri, "folders": folders, "files": len(files)}
 
 
+# ---------------------------------------------------------------- Iconik (creator footage)
+class IconikKeyReq(BaseModel):
+    app_id: str
+    auth_token: str
+
+
+@app.put("/api/iconik/key")
+def iconik_key(req: IconikKeyReq):
+    from . import iconik
+
+    try:
+        who = iconik.whoami((req.app_id.strip(), req.auth_token.strip()))  # check before saving
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    iconik.save_keys(req.app_id, req.auth_token)
+    return {"set": True, "user": who}
+
+
+@app.get("/api/iconik/browse")
+def iconik_browse(link: str):
+    from . import iconik
+
+    try:
+        return iconik.browse(link)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---------------------------------------------------------------- ClickUp (read-only, briefs)
+class TokenReq(BaseModel):
+    token: str
+
+
+class LinkReq(BaseModel):
+    link: str
+
+
+@app.put("/api/clickup/token")
+def clickup_token(req: TokenReq):
+    from . import clickup
+
+    try:
+        user = clickup.whoami(req.token.strip())  # check it works before saving it
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    clickup.save_token(req.token)
+    return {"set": True, "user": user.get("username")}
+
+
+@app.get("/api/clickup/tasks")
+def clickup_tasks():
+    from . import clickup
+
+    try:
+        return clickup.my_tasks()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/clickup/brief")
+def clickup_brief(req: LinkReq):
+    from . import clickup
+
+    try:
+        return clickup.brief(req.link)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class FetchReq(BaseModel):
+    location: str
+
+
+@app.post("/api/local")
+def local_copy(req: FetchReq):
+    """Path of a result on this PC, downloading the full-quality original first for cloud sources.
+    Used by the Premiere panel, which imports by file path."""
+    if not allowed(req.location):
+        raise HTTPException(403, "Not in an indexed folder")
+    try:
+        p = fetch_to(req.location, DATA_DIR / "downloads")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    if not Path(p).is_file():
+        raise HTTPException(404, f"Clip not found on this PC: {p}")
+    return {"path": str(p)}
+
+
 @app.middleware("http")
 async def no_stale_ui(request, call_next):
     """WebView2 kept serving the old index.html (and its old assets) after an update, so the
@@ -621,6 +721,9 @@ async def no_stale_ui(request, call_next):
     return response
 
 
+PANEL = Path(__file__).parent / "panel"
+if PANEL.is_dir():  # the Premiere panel's page, also openable in a browser for testing
+    app.mount("/panel", StaticFiles(directory=PANEL, html=True), name="panel")
 if STATIC.is_dir():
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")
 

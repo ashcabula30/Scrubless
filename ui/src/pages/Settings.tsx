@@ -17,6 +17,36 @@ export default function SettingsPage() {
   const [appKey, setAppKey] = useState("");
   const [test, setTest] = useState<string | null>(null);
   const [bucket, setBucket] = useState("");
+  const [ikApp, setIkApp] = useState("");
+  const [ikToken, setIkToken] = useState("");
+  const [ikUser, setIkUser] = useState("");
+
+  const saveIconik = async () => {
+    try {
+      const r = await api.iconikKey(ikApp, ikToken);
+      setIkApp("");
+      setIkToken("");
+      setIkUser(r.user);
+      refresh();
+      toast(`Iconik connected as ${r.user}`);
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+  const [cuToken, setCuToken] = useState("");
+  const [cuUser, setCuUser] = useState("");
+
+  const saveClickUp = async () => {
+    try {
+      const r = await api.clickupToken(cuToken);
+      setCuToken("");
+      setCuUser(r.user);
+      refresh();
+      toast(`ClickUp connected as ${r.user}`);
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
 
   useEffect(() => setBucket(status?.b2_bucket ?? ""), [status?.b2_bucket]);
 
@@ -92,6 +122,59 @@ export default function SettingsPage() {
               </span>
             </label>
           ))}
+        </div>
+
+        <div className="card-block">
+          <h2>ClickUp</h2>
+          <div className="row">
+            <span className={`dot ${status?.clickup ? "ok" : ""}`} />
+            {status?.clickup ? `Connected${cuUser ? ` as ${cuUser}` : ""}` : "Not connected"}
+          </div>
+          <span className="hint">
+            For importing briefs on the Brief page (read-only: Scrubless never changes anything in ClickUp). Get your personal
+            token in ClickUp › your avatar › Settings › Apps › API Token (starts with <span className="mono">pk_</span>). It's stored
+            on this PC in <span className="mono">clickup.json</span>.
+          </span>
+          <div className="row">
+            <input
+              className="input grow"
+              type="password"
+              placeholder="pk_…"
+              value={cuToken}
+              onChange={(e) => setCuToken(e.target.value)}
+              autoComplete="off"
+            />
+            <button className="btn primary" disabled={!cuToken.trim()} onClick={saveClickUp}>
+              {status?.clickup ? "Replace token" : "Connect"}
+            </button>
+          </div>
+        </div>
+
+        <div className="card-block">
+          <h2>Iconik</h2>
+          <div className="row">
+            <span className={`dot ${status?.iconik ? "ok" : ""}`} />
+            {status?.iconik ? `Connected${ikUser ? ` as ${ikUser}` : ""}` : "Not connected"}
+          </div>
+          <span className="hint">
+            For indexing creator footage straight from Iconik. Needs an App ID and Auth Token (Iconik › Admin › Settings ›
+            Application Tokens; an admin may need to make one). Ask for a token on a <b>read-only</b> account: it's stored on
+            this PC in <span className="mono">iconik.json</span>.
+          </span>
+          <div className="row">
+            <input className="input" style={{ width: 280 }} placeholder="App ID" value={ikApp} onChange={(e) => setIkApp(e.target.value)} />
+            <input
+              className="input grow"
+              type="password"
+              placeholder="Auth Token"
+              value={ikToken}
+              onChange={(e) => setIkToken(e.target.value)}
+              autoComplete="off"
+            />
+            <button className="btn primary" disabled={!ikApp.trim() || !ikToken.trim()} onClick={saveIconik}>
+              {status?.iconik ? "Replace" : "Connect"}
+            </button>
+          </div>
         </div>
 
         <div className="card-block">

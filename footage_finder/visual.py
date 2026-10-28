@@ -36,11 +36,16 @@ class Vision:
         """frames: uint8 array (n, side, side, 3) -> normalized (n, d)."""
         torch = self.torch
         out = []
+        ip = self.proc.image_processor
+        mean = torch.tensor(ip.image_mean, device=self.device, dtype=self.dtype).view(1, 3, 1, 1)
+        std = torch.tensor(ip.image_std, device=self.device, dtype=self.dtype).view(1, 3, 1, 1)
         with torch.no_grad():
-            for i in range(0, len(frames), 32):
-                inp = self.proc(images=list(frames[i:i + 32]), return_tensors="pt").to(self.device)
-                inp["pixel_values"] = inp["pixel_values"].to(self.dtype)
-                f = _tensor(self.model.get_image_features(**inp))
+            for i in range(0, len(frames), 64):
+                # Frames arrive already side x side, so only rescale + normalize remain: done on the GPU
+                # (the processor did it on the CPU image by image, which capped indexing at ~50 frames/s).
+                x = torch.from_numpy(np.ascontiguousarray(frames[i:i + 64])).to(self.device).permute(0, 3, 1, 2)
+                x = (x.to(self.dtype) * ip.rescale_factor - mean) / std
+                f = _tensor(self.model.get_image_features(pixel_values=x))
                 out.append((f / f.norm(dim=-1, keepdim=True)).float().cpu().numpy())
         return np.concatenate(out) if out else np.zeros((0, 1), dtype=np.float32)
 
@@ -59,10 +64,44 @@ class Vision:
         return 1 / (1 + np.exp(-(np.asarray(cos) * scale + bias)))
 
 
-def iter_frames(path: Path, fps: float, side: int, chunk=64, hw=False):
-    """Yield (times, frames) chunks, decoded (on the GPU if hw) and squashed to side x side by FFmpeg."""
-    cmd = ["ffmpeg", *(env.HWDEC if hw else []), "-v", "error", "-nostdin", "-i", str(path), "-an",
-           "-vf", f"fps={fps},scale={side}:{side}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+def keyframe_times(path: Path):
+    """Keyframe times from the container's packet list (no decoding, well under a second)."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags",
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True, **NO_WINDOW)
+    t = sorted(float(a) for a, _, f in (ln.partition(",") for ln in r.stdout.split()) if f.startswith("K") and a not in ("", "N/A"))
+    return [x - t[0] for x in t] if t else []
+
+
+def sample_plan(path: Path, fps: float):
+    """Decode only keyframes when they fall about as often as we sample (phone footage: ~1 per
+    second). Decoding every frame of 4K HEVC just to keep 2 a second was 6x slower.
+    Returns (keyframe times, keep mask), or None to decode every frame and sample at fps."""
+    kf = keyframe_times(path)
+    if len(kf) < 2:
+        return None
+    gaps = np.diff(kf)
+    if np.median(gaps) > max(1.5, 1.5 / fps) or np.median(gaps) < 0.4 / fps:
+        return None  # sparse keyframes (screen recordings) or all-intra codecs: the fps path is as cheap
+    keep, last = [], -1e9
+    for t in kf:
+        keep.append(t - last >= 0.8 / fps)
+        if keep[-1]:
+            last = t
+    return kf, np.array(keep)
+
+
+def iter_frames(path: Path, fps: float, side: int, chunk=64, hw=False, plan=None):
+    """Yield (times, frames) chunks, decoded (and resized, on the GPU if hw) to side x side by FFmpeg.
+    plan: from sample_plan(), to decode keyframes only."""
+    pre = ["-skip_frame", "nokey"] if plan else []
+    if hw:
+        pre += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        size = f"scale_cuda={side}:{side}:format=nv12,hwdownload,format=nv12"
+    else:
+        size = f"scale={side}:{side}"
+    vf = size if plan else f"fps={fps},{size}"
+    cmd = ["ffmpeg", "-v", "error", "-nostdin", *pre, "-i", str(path), "-an", "-vf", vf,
+           *(["-fps_mode", "passthrough"] if plan else []), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = side * side * 3
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **NO_WINDOW)
     n = 0
@@ -73,7 +112,15 @@ def iter_frames(path: Path, fps: float, side: int, chunk=64, hw=False):
             if k == 0:
                 break
             frames = np.frombuffer(buf[:k * frame_bytes], np.uint8).reshape(k, side, side, 3)
-            yield np.arange(n, n + k) / fps, frames
+            if plan:
+                kf, keep = plan
+                k = min(k, len(kf) - n)  # never more frames than keyframes listed
+                if k <= 0:
+                    break
+                m = keep[n:n + k]
+                yield np.asarray(kf[n:n + k])[m], frames[:k][m]
+            else:
+                yield np.arange(n, n + k) / fps, frames
             n += k
     finally:
         proc.stdout.close()
@@ -99,9 +146,13 @@ def embed_file(vis, path: Path, fps: float, keep_thumbs=False, thumb_h=240):
 
     aspect = display_aspect(path) if keep_thumbs else None
 
+    plan = sample_plan(path, fps)
+
     def run(hw):
         times, embs, thumbs = [], [], []
-        for t, frames in iter_frames(path, fps, vis.side, hw=hw):
+        for t, frames in iter_frames(path, fps, vis.side, hw=hw, plan=plan):
+            if not len(frames):
+                continue
             times.extend(t)
             embs.append(vis.embed_images(frames))
             if keep_thumbs:

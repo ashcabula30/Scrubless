@@ -56,6 +56,8 @@ export type Status = {
   b2_key: { set: boolean; key_id_tail?: string };
   b2_bucket: string;
   sources: number;
+  clickup: boolean;
+  iconik: boolean;
 };
 
 export type BriefLine = {
@@ -68,7 +70,9 @@ export type BriefLine = {
   shown: Result[];
 };
 
-export type BriefRow = { label: string; script: string; visual: string };
+export type BriefRow = { label: string; script: string; visual: string; text?: string };
+
+export type ClickUpTask = { id: string; url: string; name: string; subtask: string; client: string; status: string; due: number | null };
 
 async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const opts: RequestInit = { ...init };
@@ -108,6 +112,16 @@ export const api = {
     return call<{ rows: BriefRow[] }>("/api/brief/ocr", { method: "POST", body: form });
   },
   rowsFromText: (text: string) => call<{ rows: BriefRow[] }>("/api/brief/rows-from-text", { json: { text } }),
+  iconikKey: (app_id: string, auth_token: string) =>
+    call<{ set: boolean; user: string }>("/api/iconik/key", { method: "PUT", json: { app_id, auth_token } }),
+  iconikBrowse: (link: string) =>
+    call<{ id: string; title: string; collections: { id: string; title: string }[]; assets: number }>(
+      `/api/iconik/browse?link=${encodeURIComponent(link)}`,
+    ),
+  clickupToken: (token: string) => call<{ set: boolean; user: string }>("/api/clickup/token", { method: "PUT", json: { token } }),
+  clickupTasks: () => call<ClickUpTask[]>("/api/clickup/tasks"),
+  clickupBrief: (link: string) =>
+    call<{ rows: BriefRow[]; task: { name: string; url: string; client: string } }>("/api/clickup/brief", { json: { link } }),
   roughcut: (body: unknown) => call<Job>("/api/roughcut", { json: body }),
   download: (locations: string[], dest: string) => call<Job>("/api/download", { json: { locations, dest } }),
   reveal: (path: string) => call<{ ok: boolean }>("/api/reveal", { json: { path } }),

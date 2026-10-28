@@ -1,11 +1,12 @@
 // Turn whatever was pasted (a ClickUp table, a spreadsheet, a markdown table) into brief rows.
 
-export type Row = { label: string; script: string; visual: string };
+export type Row = { label: string; script: string; visual: string; text: string }; // text: On-screen text
 
 const SCRIPT_HEAD = /\b(script|vo|voice ?over|dialogue|line|copy|audio)\b/i;
 const VISUAL_HEAD = /\b(visuals?|shots?|b-?roll|scene|video)\b/i;
+const TEXT_HEAD = /\b(on[- ]?screen|ost|supers?|text overlay|captions?)\b/i;
 
-export const emptyRow = (): Row => ({ label: "", script: "", visual: "" });
+export const emptyRow = (): Row => ({ label: "", script: "", visual: "", text: "" });
 
 /** Rows of cell texts -> brief rows, using the header row ("Script", "Visual") to find the columns. */
 export function rowsFromCells(table: string[][]): Row[] {
@@ -15,7 +16,8 @@ export function rowsFromCells(table: string[][]): Row[] {
   const head = headIdx >= 0 ? table[headIdx] : null;
   const width = Math.max(...table.map((r) => r.length));
   let scriptCol = head ? head.findIndex((c) => SCRIPT_HEAD.test(c) && !VISUAL_HEAD.test(c)) : -1;
-  let visualCol = head ? head.findIndex((c) => VISUAL_HEAD.test(c)) : -1;
+  let visualCol = head ? head.findIndex((c) => VISUAL_HEAD.test(c) && !TEXT_HEAD.test(c)) : -1;
+  const textCol = head ? head.findIndex((c) => TEXT_HEAD.test(c)) : -1;
   if (scriptCol < 0 && visualCol < 0) {
     // No header: Section | Script | Visual, or Script | Visual
     [scriptCol, visualCol] = width >= 3 ? [1, 2] : [0, 1];
@@ -27,8 +29,9 @@ export function rowsFromCells(table: string[][]): Row[] {
       label: labelCol >= 0 ? (r[labelCol] ?? "").trim() : "",
       script: (r[scriptCol] ?? "").trim(),
       visual: visualCol >= 0 ? (r[visualCol] ?? "").trim() : "",
+      text: textCol >= 0 ? (r[textCol] ?? "").trim() : "",
     }))
-    .filter((r) => r.script || r.visual);
+    .filter((r) => r.script || r.visual || r.text);
 }
 
 /** Text of an HTML table cell, keeping paragraphs (ClickUp puts each in its own block). */

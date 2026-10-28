@@ -3,6 +3,7 @@ import { api, Job } from "../api";
 import { useApp } from "../App";
 import ProgressBar from "../components/ProgressBar";
 import B2Browser from "../components/B2Browser";
+import IconikBrowser from "../components/IconikBrowser";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;
@@ -48,6 +49,7 @@ export default function LibraryPage() {
   const { sources, jobs, refresh, toast, track, status, go } = useApp();
   const [path, setPath] = useState("");
   const [showB2, setShowB2] = useState(false);
+  const [showIconik, setShowIconik] = useState(false);
 
   const add = async (p: string) => {
     if (!p.trim()) return;
@@ -101,8 +103,8 @@ export default function LibraryPage() {
             </button>
           </div>
           <span className="hint">
-            Or drag a footage folder from Explorer onto this window. Subfolders are included. Search data is kept on D:, not
-            inside the footage folder.
+            Or drag a footage folder from Explorer onto this window. Subfolders are included, except exports, finals, renders
+            and Premiere preview folders. Search data is kept on D:, not inside the footage folder.
           </span>
         </div>
 
@@ -133,7 +135,7 @@ export default function LibraryPage() {
                   <tr key={s.id}>
                     <td>
                       <div className="row">
-                        {s.remote && <span className="badge blue">B2</span>}
+                        {s.remote && <span className="badge blue">{s.source.startsWith("iconik://") ? "Iconik" : "B2"}</span>}
                         <span className="strong ellipsis" title={s.name}>{s.name}</span>
                         {s.busy && <span className="badge">indexing…</span>}
                       </div>
@@ -158,6 +160,32 @@ export default function LibraryPage() {
           ) : (
             <div className="panel empty">Nothing indexed yet. Add a folder above.</div>
           )}
+        </div>
+
+        <div className="col" style={{ gap: 6 }}>
+          <div className="row">
+            <h2 className="grow">Iconik (creator footage)</h2>
+            <button className="btn sm" onClick={() => setShowIconik(!showIconik)}>
+              {showIconik ? "Hide" : "Show"}
+            </button>
+          </div>
+          {showIconik &&
+            (status?.iconik ? (
+              <>
+                <span className="hint">
+                  Open a collection and index it. Scrubless indexes each clip's small proxy (quick), and downloads the
+                  full-quality original only for clips you pick.
+                </span>
+                <IconikBrowser onIndex={add} />
+              </>
+            ) : (
+              <div className="panel pad row">
+                <span className="grow">Iconik needs an App ID and Auth Token first.</span>
+                <button className="btn" onClick={() => go("settings")}>
+                  Set up in Settings
+                </button>
+              </div>
+            ))}
         </div>
 
         <div className="col" style={{ gap: 6 }}>

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scrubless</title>
+<style>
+  :root {
+    --bg: #1d1d1f; --surface: #26262a; --surface-high: #303035; --primary: #d0bcff; --on-primary: #381e72;
+    --text: #e6e6e8; --muted: #a8a3ae; --error: #f2b8b5; --ok: #8dd8b0; --r: 10px;
+    font: 12px/1.4 "Segoe UI", system-ui, sans-serif; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 10px 6px; display: flex; flex-direction: column; gap: 6px; }
+  input { width: 100%; padding: 8px 12px; border: 1px solid #44444a; border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; outline: none; }
+  input:focus { border-color: var(--primary); }
+  .seg { display: flex; gap: 4px; }
+  .seg button, .act { border: 0; border-radius: 999px; padding: 4px 10px; background: var(--surface-high); color: var(--text); font: inherit; cursor: pointer; }
+  .seg button.on { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+  .act:hover, .seg button:hover:not(.on) { background: #3c3c42; }
+  .act.primary { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+  .act:disabled { opacity: 0.5; cursor: default; }
+  #list { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .res { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; padding: 6px; border-radius: var(--r); background: var(--surface); }
+  .res:hover { background: var(--surface-high); }
+  .thumb { width: 96px; height: 54px; border-radius: 6px; background: #111 center/cover no-repeat; position: relative; }
+  .thumb span { position: absolute; right: 3px; bottom: 3px; padding: 0 4px; border-radius: 4px; background: rgba(0,0,0,.7); font-size: 10px; }
+  .meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .file { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .text { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row { display: flex; gap: 4px; align-items: center; margin-top: 2px; }
+  .tag { color: var(--primary); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  #status { padding: 6px 10px; min-height: 26px; color: var(--muted); border-top: 1px solid #333; }
+  #status.err { color: var(--error); } #status.ok { color: var(--ok); }
+  .empty { color: var(--muted); text-align: center; padding: 30px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <input id="q" placeholder="Search a line or a shot, then Enter" autofocus />
+  <div class="seg" id="mode">
+    <button data-m="both" class="on">Both</button><button data-m="said">Said</button><button data-m="shown">Shown</button>
+  </div>
+</header>
+<div id="list"><div class="empty">Search your indexed footage. <b>Source</b> opens the take with in/out set; <b>Place</b> drops it at the playhead on an empty track.</div></div>
+<div id="status"></div>
+<script>
+  const API = "http://127.0.0.1:7792";
+  // Inside Premiere the panel talks to the app with Node (no CORS); opened from the app's /panel/ page it uses fetch.
+  const nodeRequire = typeof require === "function" ? require : window.cep_node && window.cep_node.require;
+  let mode = "both";
+
+  function call(path, body) {
+    if (!nodeRequire || location.origin === API) {
+      return fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {})
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j; });
+    }
+    const http = nodeRequire("http");
+    return new Promise((resolve, reject) => {
+      const data = body ? JSON.stringify(body) : null;
+      const req = http.request(API + path, { method: data ? "POST" : "GET", headers: data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {} }, (res) => {
+        let s = ""; res.setEncoding("utf8"); res.on("data", (c) => (s += c));
+        res.on("end", () => { let j = {}; try { j = JSON.parse(s); } catch (e) {} res.statusCode < 400 ? resolve(j) : reject(new Error(j.detail || res.statusCode)); });
+      });
+      req.on("error", () => reject(new Error("offline")));
+      if (data) req.write(data);
+      req.end();
+    });
+  }
+
+  function host(script) {
+    return new Promise((resolve) => (window.__adobe_cep__ ? window.__adobe_cep__.evalScript(script, resolve) : resolve("error:Only works inside Premiere.")));
+  }
+
+  function say(msg, kind) { const s = document.getElementById("status"); s.textContent = msg; s.className = kind || ""; }
+
+  function tc(t) { const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, "0")}`; }
+
+  function openApp() {
+    try {
+      const exe = nodeRequire("path").join(process.env.LOCALAPPDATA, "Programs", "Scrubless", "Scrubless.exe");
+      nodeRequire("child_process").spawn(exe, [], { detached: true, stdio: "ignore" }).unref();
+      say("Opening Scrubless… search again in a few seconds.");
+    } catch (e) { say("Open Scrubless from the Start menu.", "err"); }
+  }
+
+  async function search() {
+    const q = document.getElementById("q").value.trim();
+    if (!q) return;
+    say("Searching…");
+    let r;
+    try { r = await call("/api/search", { q, mode, top: 20 }); }
+    catch (e) {
+      if (e.message !== "offline") return say(e.message, "err");
+      const list = document.getElementById("list");
+      list.innerHTML = '<div class="empty">Scrubless isn\'t running.<br><br><button class="act primary" id="open">Open Scrubless</button></div>';
+      document.getElementById("open").onclick = openApp;
+      return say("");
+    }
+    render([...r.said, ...r.shown]);
+    say(`${r.said.length + r.shown.length} result(s) in ${r.ms} ms`);
+  }
+
+  function render(results) {
+    const list = document.getElementById("list");
+    list.innerHTML = results.length ? "" : '<div class="empty">Nothing found. Try other words, or check the folder is indexed in Scrubless.</div>';
+    for (const r of results) {
+      const el = document.createElement("div");
+      el.className = "res";
+      const thumb = `${API}/api/thumb?loc=${encodeURIComponent(r.location)}&t=${r.thumb_t}&h=120${r.source ? `&src=${r.source}` : ""}`;
+      const what = r.kind === "said" ? `“${r.text || ""}”` : `Shot · ${r.label}`;
+      const take = r.takes > 1 ? ` · take ${r.take} of ${r.takes}` : "";
+      el.innerHTML = `<div class="thumb"><span>${tc(r.start)}</span></div>
+        <div class="meta"><span class="tag">${r.kind}${take}</span><span class="file"></span><span class="text"></span>
+        <div class="row"><button class="act" data-a="source">Source</button><button class="act primary" data-a="place">Place</button></div></div>`;
+      el.querySelector(".thumb").style.backgroundImage = `url("${thumb}")`;
+      el.querySelector(".file").textContent = r.file;
+      el.querySelector(".file").title = r.location;
+      el.querySelector(".text").textContent = what;
+      el.querySelectorAll(".act").forEach((b) => (b.onclick = () => use(r, b.dataset.a, el)));
+      el.ondblclick = (e) => e.target.tagName !== "BUTTON" && use(r, "source", el);
+      list.appendChild(el);
+    }
+  }
+
+  async function use(r, how, el) {
+    const buttons = el.querySelectorAll(".act");
+    buttons.forEach((b) => (b.disabled = true));
+    try {
+      say(r.remote ? "Downloading the original…" : "Importing…");
+      const { path } = await call("/api/local", { location: r.location });
+      // Small handles so a take isn't clipped mid-word; shots keep their detected range.
+      const pad = r.kind === "said" ? [0.15, 0.3] : [0, 0];
+      const inS = Math.max(0, r.start - pad[0]), outS = r.end + pad[1];
+      const audioOnly = /\.(wav|mp3|m4a|aac|flac)$/i.test(path);
+      const out = await host(`scrublessPlace(${JSON.stringify(path)}, ${inS}, ${outS}, "${how}", ${audioOnly})`);
+      out.startsWith("ok:") ? say(out.slice(3), "ok") : say(out.replace(/^error:/, ""), "err");
+    } catch (e) {
+      say(e.message === "offline" ? "Scrubless isn't running." : e.message, "err");
+    } finally {
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  document.getElementById("q").addEventListener("keydown", (e) => e.key === "Enter" && search());
+  document.querySelectorAll("#mode button").forEach((b) => (b.onclick = () => {
+    document.querySelectorAll("#mode button").forEach((x) => x.classList.toggle("on", x === b));
+    mode = b.dataset.m;
+    search();
+  }));
+</script>
+</body>
+</html>

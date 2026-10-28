@@ -27,7 +27,7 @@ def _key(*parts) -> str:
 
 def local_path(location: str) -> Path:
     """A local copy of the media: the file itself, or a cached Backblaze download."""
-    return fetch_to(location, REMOTE_CACHE) if is_remote(location) else Path(location)
+    return fetch_to(location, REMOTE_CACHE, original=False) if is_remote(location) else Path(location)
 
 
 def _encode(src: Path, start: float, length: float, out: Path, codec: str) -> bool:

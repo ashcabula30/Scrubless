@@ -216,6 +216,8 @@ def rows_to_items(rows):
         visual, notes = [], []
         for p in _paras(row.get("visual", "")):
             (notes if NOTE.match(p) else visual).append(p)
+        if (row.get("text") or "").strip():  # the On-screen text column
+            notes.append("On-screen text: " + " ".join(row["text"].split()))
         if len(visual) > max(1, len(script)):
             visual = visual[: max(1, len(script)) - 1] + [" ".join(visual[max(1, len(script)) - 1:])]
         row_items = []
@@ -236,7 +238,7 @@ def rows_to_items(rows):
 
 def items_to_rows(items):
     """parse_brief() items (one per text line) -> table rows, for pasting plain text into the table."""
-    return [{"label": it["label"], "script": it["say"], "visual": it["show"]} for it in items]
+    return [{"label": it["label"], "script": it["say"], "visual": it["show"], "text": ""} for it in items]
 
 
 LABEL = re.compile(r"^((?:hook|line|vo|cta|body|scene|a-?roll|b-?roll)\s*\d*)\s*[:\-–—]\s*(.*)$", re.I)
