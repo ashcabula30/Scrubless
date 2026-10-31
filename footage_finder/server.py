@@ -98,8 +98,7 @@ class Engine:
 
     def __init__(self):
         self.lock = threading.Lock()
-        self._key = None
-        self._speech = self._scenes = None
+        self._cache = {}
         self.ready = False
 
     def _folders(self, ids):
@@ -112,11 +111,14 @@ class Engine:
 
         folders = self._folders(ids)
         key = tuple((str(f), db_mtime(f)) for f in folders)
-        if key != self._key:
-            self._key, self._speech, self._scenes = key, Searcher(folders), None
-        if visual and self._scenes is None:
-            self._scenes = SceneSearcher(folders)
-        return self._speech, self._scenes
+        if key not in self._cache:
+            if len(self._cache) > 8:
+                self._cache.clear()
+            self._cache[key] = {"speech": Searcher(folders), "scenes": None}
+        entry = self._cache[key]
+        if visual and entry["scenes"] is None:
+            entry["scenes"] = SceneSearcher(folders)
+        return entry["speech"], entry["scenes"]
 
     def warm(self):
         """Load the models in the background at startup so the first search is quick."""
@@ -361,6 +363,8 @@ def cancel_job(jid: str):
 
 @app.post("/api/search")
 def search(req: SearchReq):
+    from concurrent.futures import ThreadPoolExecutor
+
     q = req.q.strip()
     if not q:
         return {"said": [], "shown": [], "ms": 0}
@@ -369,8 +373,17 @@ def search(req: SearchReq):
     with engine.lock:
         speech, scenes = engine.searchers(req.sources, want_shown)
         sb = bases()
-        said = [hit_dict(h, sb) for h in speech.find(q, req.top, req.min)] if want_said else []
-        shown = [scene_dict(s, sb) for s in scenes.find(q, req.top)] if want_shown and scenes else []
+        if want_said and want_shown and scenes:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                f_said = pool.submit(speech.find, q, req.top, req.min)
+                f_shown = pool.submit(scenes.find, q, req.top)
+                said_hits = f_said.result()
+                shown_scenes = f_shown.result()
+            said = [hit_dict(h, sb) for h in said_hits]
+            shown = [scene_dict(s, sb) for s in shown_scenes]
+        else:
+            said = [hit_dict(h, sb) for h in speech.find(q, req.top, req.min)] if want_said else []
+            shown = [scene_dict(s, sb) for s in scenes.find(q, req.top)] if want_shown and scenes else []
     prefetch_previews([*said[:3], *shown[:2]])
     return {"said": said, "shown": shown, "ms": int((time.time() - t0) * 1000)}
 
@@ -531,7 +544,8 @@ def preview(loc: str, start: float, end: float):
     if not allowed(loc):
         raise HTTPException(403, "Not in an indexed folder")
     try:
-        return FileResponse(make(loc, start, end), media_type="video/mp4")
+        return FileResponse(make(loc, start, end), media_type="video/mp4",
+                            headers={"Cache-Control": "public, max-age=86400"})
     except Exception as e:
         raise HTTPException(500, str(e))
 

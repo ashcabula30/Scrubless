@@ -65,6 +65,9 @@ class Hit:
         return join(self.base, self.file)
 
 
+_QUERY_CACHE = {}
+
+
 class Searcher:
     """Loads one or more folder indexes once, then answers many queries."""
 
@@ -77,13 +80,27 @@ class Searcher:
                 self.parts.append(_prepare(idx.base, idx.get_meta("embed"), segs, embs))
 
     def _embed(self, model_name, text):
-        return embedder(model_name).encode([_format_query(model_name, text)], normalize_embeddings=True)[0]
+        cache_key = (model_name, text)
+        if cache_key not in _QUERY_CACHE:
+            if len(_QUERY_CACHE) > 1024:
+                _QUERY_CACHE.clear()
+            _QUERY_CACHE[cache_key] = embedder(model_name).encode(
+                [_format_query(model_name, text)], normalize_embeddings=True
+            )[0]
+        return _QUERY_CACHE[cache_key]
 
     def _embed_batch(self, model_name, texts):
         if not texts:
             return np.zeros((0, 1024), dtype=np.float32)
-        formatted = [_format_query(model_name, t) for t in texts]
-        return embedder(model_name).encode(formatted, normalize_embeddings=True, batch_size=32)
+        uncached = [t for t in texts if (model_name, t) not in _QUERY_CACHE]
+        if uncached:
+            formatted = [_format_query(model_name, t) for t in uncached]
+            computed = embedder(model_name).encode(formatted, normalize_embeddings=True, batch_size=32)
+            if len(_QUERY_CACHE) + len(uncached) > 1024:
+                _QUERY_CACHE.clear()
+            for t, emb in zip(uncached, computed):
+                _QUERY_CACHE[(model_name, t)] = emb
+        return np.stack([_QUERY_CACHE[(model_name, t)] for t in texts])
 
     def find(self, query: str, top=10, min_score=0.55, q_emb_cached=None):
         qn = normalize(query)
@@ -102,10 +119,14 @@ class Searcher:
             for texts, lens, s_vec, joined in ((p["norms"], p["lens"], sem, False),
                                                (p["pair_norms"], p["pair_lens"], (sem + sem_next) / 2, True)):
                 # partial_ratio finds the line inside a longer one; a shorter candidate ("Oh")
-                # must match as a whole or it scores high on almost anything. Scored in one batch.
+                # must match as a whole or it scores high on almost anything.
                 partial = process.cdist([qn], texts, scorer=fuzz.partial_ratio)[0]
-                whole = process.cdist([qn], texts, scorer=fuzz.ratio)[0]
-                fz = np.where(lens >= 0.8 * len(qn), partial, whole) / 100
+                if joined:
+                    # Joined pair norms are virtually always longer than the query; ratio is redundant
+                    fz = partial / 100
+                else:
+                    whole = process.cdist([qn], texts, scorer=fuzz.ratio)[0]
+                    fz = np.where(lens >= 0.8 * len(qn), partial, whole) / 100
                 score = 0.65 * fz + 0.35 * np.maximum(s_vec, 0.0)
                 if joined:
                     score[~nxt] = -1.0

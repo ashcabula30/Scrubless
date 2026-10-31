@@ -16,6 +16,9 @@ def _tensor(out):
     return out if hasattr(out, "norm") else out.pooler_output
 
 
+_VISION_QUERY_CACHE = {}
+
+
 class Vision:
     def __init__(self, model_id: str, device: str):
         import torch
@@ -52,22 +55,34 @@ class Vision:
         return np.concatenate(out) if out else np.zeros((0, 1), dtype=np.float32)
 
     def embed_text(self, text: str):
-        torch = self.torch
-        inp = self.proc(text=[text.lower()], padding="max_length", max_length=64,
-                        return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            f = _tensor(self.model.get_text_features(**inp))
-        return (f / f.norm(dim=-1, keepdim=True))[0].float().cpu().numpy()
+        key = text.lower().strip()
+        if key not in _VISION_QUERY_CACHE:
+            if len(_VISION_QUERY_CACHE) > 1024:
+                _VISION_QUERY_CACHE.clear()
+            torch = self.torch
+            inp = self.proc(text=[key], padding="max_length", max_length=64,
+                            return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                f = _tensor(self.model.get_text_features(**inp))
+            _VISION_QUERY_CACHE[key] = (f / f.norm(dim=-1, keepdim=True))[0].float().cpu().numpy()
+        return _VISION_QUERY_CACHE[key]
 
     def embed_texts(self, texts: list[str]):
         if not texts:
             return np.zeros((0, self.model.config.text_config.hidden_size), dtype=np.float32)
-        torch = self.torch
-        inp = self.proc(text=[t.lower() for t in texts], padding="max_length", max_length=64,
-                        return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            f = _tensor(self.model.get_text_features(**inp))
-        return (f / f.norm(dim=-1, keepdim=True)).float().cpu().numpy()
+        uncached = [t.lower().strip() for t in texts if t.lower().strip() not in _VISION_QUERY_CACHE]
+        if uncached:
+            torch = self.torch
+            inp = self.proc(text=uncached, padding="max_length", max_length=64,
+                            return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                f = _tensor(self.model.get_text_features(**inp))
+            computed = (f / f.norm(dim=-1, keepdim=True)).float().cpu().numpy()
+            if len(_VISION_QUERY_CACHE) + len(uncached) > 1024:
+                _VISION_QUERY_CACHE.clear()
+            for t, emb in zip(uncached, computed):
+                _VISION_QUERY_CACHE[t] = emb
+        return np.stack([_VISION_QUERY_CACHE[t.lower().strip()] for t in texts])
 
     def prob(self, cos):
         """SigLIP's calibrated 'does this text describe this image' probability."""
