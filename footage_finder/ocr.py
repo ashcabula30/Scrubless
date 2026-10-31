@@ -110,6 +110,8 @@ def _roles(header_cells):
 
 def _rows_from_cells(table):
     """table: list of rows, each a list of cell texts. Finds the header and builds brief rows."""
+    if not table:
+        return []
     head_i = next((i for i, r in enumerate(table) if any(SCRIPT_HEAD.search(c) or VISUAL_HEAD.search(c) for c in r)), None)
     roles = _roles(table[head_i] if head_i is not None else table[0])
     body = table[head_i + 1:] if head_i is not None else table

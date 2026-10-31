@@ -73,17 +73,34 @@ def _make_preview(location, a, length, out):
     return out
 
 
+_still_locks = {}
+_still_locks_guard = threading.Lock()
+
+
 def still(location: str, t: float, height=360, index=None, rel=None) -> Path:
     """One frame as JPG: the nearest frame stored at index time, else extracted with ffmpeg."""
     if index is not None and rel is not None:
         stored = index.thumb(rel, t)
         if stored is not None:
             return stored
-    out = STILLS / f"{_key(location, round(t, 1), height)}.jpg"
-    if out.exists():
+    key = _key(location, round(t, 1), height)
+    out = STILLS / f"{key}.jpg"
+    if out.exists() and out.stat().st_size > 0:
         return out
-    out.parent.mkdir(parents=True, exist_ok=True)
-    src = local_path(location)
-    ffmpeg(["-v", "error", "-nostdin", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(src),
-            "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(out)], capture_output=True).check_returncode()
-    return out
+    with _still_locks_guard:
+        lock = _still_locks.setdefault(key, threading.Lock())
+    with lock:
+        if out.exists() and out.stat().st_size > 0:
+            return out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        src = local_path(location)
+        tmp = out.with_suffix(f".part_{threading.get_ident()}.jpg")
+        try:
+            ffmpeg(["-v", "error", "-nostdin", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(src),
+                    "-frames:v", "1", "-vf", f"scale=-2:{height}", "-q:v", "4", str(tmp)],
+                   capture_output=True).check_returncode()
+            if tmp.exists() and tmp.stat().st_size > 0:
+                tmp.replace(out)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return out

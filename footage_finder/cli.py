@@ -63,11 +63,10 @@ def make_sheet(scenes, out: Path, title_prefix=""):
     thumbs_dir = DATA_DIR / "thumbs"
     items = []
     for i, s in enumerate(scenes, 1):
-        if is_remote(s.location):  # frames saved at index time, so no download needed
-            thumb = s.index.thumb(s.file, s.peak) if s.index else None
-            if thumb is None:
+        thumb = s.index.thumb(s.file, s.peak) if s.index else None
+        if thumb is None:
+            if is_remote(s.location):
                 continue
-        else:
             thumb = thumbs_dir / f"{abs(hash((s.location, round(s.peak, 1))))}.jpg"
             if not thumb.exists():
                 save_thumb(Path(s.location), s.peak, thumb)

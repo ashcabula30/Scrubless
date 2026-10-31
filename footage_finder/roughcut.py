@@ -70,7 +70,14 @@ class Timeline:
         path = Path(path)
         if path not in self.files:
             self.files[path] = probe(path)
-        start_in = self.f(src_in)
+        file_dur = self.files[path].get("duration") or 0.0
+        start_in = max(0, self.f(src_in))
+        if file_dur > 0:
+            total_file_frames = max(1, self.f(file_dur))
+            if start_in >= total_file_frames:
+                start_in = max(0, total_file_frames - 1)
+            frames = min(frames, total_file_frames - start_in)
+        frames = max(1, frames)
         clip = {"path": path, "in": start_in, "out": start_in + frames, "start": rec_frame, "end": rec_frame + frames}
         clip["linked"] = linked
         self.tracks[track].append(clip)
@@ -130,16 +137,20 @@ def plan(items, fps, resolve=Path):
             if s:
                 used.append((s.location, s.peak))
                 spath, info_s = local(s.location)
-                b_in = max(0.0, min(s.peak - length / 2, (info_s["duration"] or length) - length))
-                tl.add("V2", spath, b_in, frames, t)
+                b_dur = info_s.get("duration") or length
+                b_len = min(length, b_dur)
+                b_frames = max(1, tl.f(b_len))
+                b_in = max(0.0, min(s.peak - b_len / 2, b_dur - b_len))
+                tl.add("V2", spath, b_in, b_frames, t)
                 note.append(f"B-roll: {name_of(s.location)} @ {s.peak:.1f}s")
         elif fresh_scene(it):
             s = fresh_scene(it)
             used.append((s.location, s.peak))
             spath, info_s = local(s.location)
-            length = min(BROLL_MAX, max(BROLL_MIN, s.end - s.start))
+            b_dur = info_s.get("duration") or BROLL_MAX
+            length = min(b_dur, min(BROLL_MAX, max(BROLL_MIN, s.end - s.start)))
             frames = max(1, tl.f(length))
-            b_in = max(0.0, min(s.peak - length / 2, (info_s["duration"] or length) - length))
+            b_in = max(0.0, min(s.peak - length / 2, b_dur - length))
             tl.add("V1", spath, b_in, frames, t)
             note.append(f"B-roll: {name_of(s.location)} @ {s.peak:.1f}s")
             for alt in shown[1:4]:

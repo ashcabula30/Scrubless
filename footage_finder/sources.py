@@ -61,11 +61,14 @@ class LocalSource:
 
     def list(self):
         for p in sorted(self.folder.rglob("*")):
-            if p.is_file() and p.suffix.lower() in MEDIA and INDEX_DIR not in p.parts:
-                rel = str(p.relative_to(self.folder))
-                if not skipped(rel):
-                    st = p.stat()
-                    yield rel, st.st_size, st.st_mtime
+            try:
+                if p.is_file() and p.suffix.lower() in MEDIA and INDEX_DIR not in p.parts:
+                    rel = str(p.relative_to(self.folder))
+                    if not skipped(rel):
+                        st = p.stat()
+                        yield rel, st.st_size, st.st_mtime
+            except (OSError, PermissionError, FileNotFoundError):
+                continue
 
     def iter_local(self, rels):
         for rel in rels:

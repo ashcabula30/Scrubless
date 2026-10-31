@@ -121,8 +121,15 @@ def my_tasks():
                 break
             page += 1
     parents = {t["parent"] for t in tasks if t.get("parent")}
+
+    def safe_parent_name(pid):
+        try:
+            return get_task(pid).get("name", "")
+        except Exception:
+            return ""
+
     with ThreadPoolExecutor(8) as pool:
-        names = dict(zip(parents, pool.map(lambda pid: get_task(pid).get("name", ""), parents)))
+        names = dict(zip(parents, pool.map(safe_parent_name, parents)))
     return [{"id": t["id"], "url": t.get("url"),
              "name": names.get(t.get("parent")) or t["name"],
              "subtask": t["name"] if t.get("parent") else "",

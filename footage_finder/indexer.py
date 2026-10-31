@@ -162,40 +162,42 @@ def index_folder(spec, tier: str = "auto", language=None, rebuild=False, visual=
     pool = ThreadPoolExecutor(max_workers=1)
     t0 = time.time()
     progress({"n": 0, "total": len(todo), "file": todo[0]})
-    for n, (rel, path) in enumerate(src.iter_local(todo), 1):
-        if cancel is not None and cancel.is_set():
-            log(f"Stopped after {n - 1} of {len(todo)} files.")
-            register(src.index_dir)
-            raise Cancelled()
-        progress({"n": n - 1, "total": len(todo), "file": rel})
-        size, mtime = listing[rel]
-        notes = []
-        if isinstance(path, Exception):  # download failed; try again next run
-            log(f"  [{n}/{len(todo)}] {rel}  download failed: {str(path)[:120]}")
-            continue
-        vis_job = pool.submit(embed_file, models.vision(), path, cfg["fps"], True) if rel in need_visual else None
-        if rel in need_speech:
-            try:
-                duration, segments, embs = transcribe(models, path, language)
-                idx.put_file(rel, size, mtime, duration, segments, embs)
-                notes.append(f"{duration:.0f}s, {len(segments)} lines")
-            except Exception as e:  # e.g. a video with no audio track
-                idx.put_file(rel, size, mtime, 0, [], [], error=str(e)[:300])
-                notes.append("no speech/audio")
-        if vis_job is not None:
-            try:
-                # Small JPGs of the sampled frames: result cards show these instead of running ffmpeg per card.
-                times, embs, thumbs = vis_job.result()
-                idx.put_vfile(rel, size, mtime, times, embs)
-                if thumbs:
-                    idx.put_thumbs(rel, times, thumbs)
-                notes.append(f"{len(times)} frames")
-            except Exception as e:
-                idx.put_vfile(rel, size, mtime, [], [], error=str(e)[:300])
-                notes.append(f"no frames: {str(e)[:80]}")
-        log(f"  [{n}/{len(todo)}] {rel}  " + ", ".join(notes))
-        progress({"n": n, "total": len(todo), "file": rel})
-    pool.shutdown()
+    try:
+        for n, (rel, path) in enumerate(src.iter_local(todo), 1):
+            if cancel is not None and cancel.is_set():
+                log(f"Stopped after {n - 1} of {len(todo)} files.")
+                register(src.index_dir)
+                raise Cancelled()
+            progress({"n": n - 1, "total": len(todo), "file": rel})
+            size, mtime = listing[rel]
+            notes = []
+            if isinstance(path, Exception):  # download failed; try again next run
+                log(f"  [{n}/{len(todo)}] {rel}  download failed: {str(path)[:120]}")
+                continue
+            vis_job = pool.submit(embed_file, models.vision(), path, cfg["fps"], True) if rel in need_visual else None
+            if rel in need_speech:
+                try:
+                    duration, segments, embs = transcribe(models, path, language)
+                    idx.put_file(rel, size, mtime, duration, segments, embs)
+                    notes.append(f"{duration:.0f}s, {len(segments)} lines")
+                except Exception as e:  # e.g. a video with no audio track
+                    idx.put_file(rel, size, mtime, 0, [], [], error=str(e)[:300])
+                    notes.append("no speech/audio")
+            if vis_job is not None:
+                try:
+                    # Small JPGs of the sampled frames: result cards show these instead of running ffmpeg per card.
+                    times, embs, thumbs = vis_job.result()
+                    idx.put_vfile(rel, size, mtime, times, embs)
+                    if thumbs:
+                        idx.put_thumbs(rel, times, thumbs)
+                    notes.append(f"{len(times)} frames")
+                except Exception as e:
+                    idx.put_vfile(rel, size, mtime, [], [], error=str(e)[:300])
+                    notes.append(f"no frames: {str(e)[:80]}")
+            log(f"  [{n}/{len(todo)}] {rel}  " + ", ".join(notes))
+            progress({"n": n, "total": len(todo), "file": rel})
+    finally:
+        pool.shutdown(wait=False)
     log(f"Done in {time.time() - t0:.0f}s.")
     del models
     gc.collect()

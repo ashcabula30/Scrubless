@@ -82,11 +82,28 @@ def source_info(sid, index_dir):
             "indexed_at": db_mtime(index_dir), "busy": jobs.busy_with(base)}
 
 
+_ALLOWED_BASES_CACHE = {"expires": 0.0, "bases": []}
+
+
+def _allowed_bases():
+    now = time.time()
+    if now > _ALLOWED_BASES_CACHE["expires"]:
+        bases = []
+        for d in indexed().values():
+            try:
+                base = Index(d).base.replace("\\", "/").lower().rstrip("/") + "/"
+                bases.append(base)
+            except Exception:
+                pass
+        _ALLOWED_BASES_CACHE["bases"] = bases
+        _ALLOWED_BASES_CACHE["expires"] = now + 5.0
+    return _ALLOWED_BASES_CACHE["bases"]
+
+
 def allowed(location: str) -> bool:
     """Only serve media from indexed sources (stops other web pages using the API to read files)."""
     loc = location.replace("\\", "/").lower()
-    for d in indexed().values():
-        base = Index(d).base.replace("\\", "/").lower().rstrip("/") + "/"
+    for base in _allowed_bases():
         if loc.startswith(base):
             return True
     return False
@@ -483,9 +500,15 @@ def rows_from_text(req: TextReq):
 
 def _ns(d):
     """Result dict from the UI -> the attribute object roughcut.plan() reads."""
-    return SimpleNamespace(location=d["location"], start=float(d["start"]), end=float(d["end"]),
-                           text=d.get("text", ""), score=float(d.get("score", 0)),
-                           peak=float(d.get("peak", d["start"])))
+    start = float(d.get("start") or 0.0)
+    end = float(d.get("end") or start)
+    peak = d.get("peak")
+    peak_val = float(peak) if peak is not None else start
+    score = d.get("score")
+    score_val = float(score) if score is not None else 0.0
+    return SimpleNamespace(location=d["location"], start=start, end=end,
+                           text=d.get("text", ""), score=score_val,
+                           peak=peak_val)
 
 
 @app.post("/api/roughcut")
@@ -561,10 +584,24 @@ def thumb(loc: str, t: float, src: str | None = None, h: int = 360):
         raise HTTPException(404, "Audio only")
     idx = None
     rel = None
-    if src and src in indexed():
-        idx = Index(indexed()[src])
-        base = idx.base.rstrip("/\\")
-        rel = loc[len(base):].lstrip("/\\")
+    idx_map = indexed()
+    if not (src and src in idx_map):
+        loc_norm = loc.replace("\\", "/").lower()
+        for sid, d in idx_map.items():
+            b = Index(d).base.replace("\\", "/").lower().rstrip("/") + "/"
+            if loc_norm.startswith(b):
+                src = sid
+                break
+    if src and src in idx_map:
+        idx = Index(idx_map[src])
+        base_norm = idx.base.replace("\\", "/").rstrip("/")
+        loc_norm = loc.replace("\\", "/")
+        if loc_norm.lower().startswith(base_norm.lower() + "/"):
+            rel = loc_norm[len(base_norm) + 1:]
+        elif loc_norm.lower() == base_norm.lower():
+            rel = ""
+        else:
+            rel = loc[len(idx.base.rstrip("/\\")):].lstrip("/\\")
     try:
         return FileResponse(still(loc, t, h, idx, rel), media_type="image/jpeg",
                             headers={"Cache-Control": "max-age=86400"})

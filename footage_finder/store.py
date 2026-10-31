@@ -31,13 +31,18 @@ class Index:
         d = self.folder / INDEX_DIR
         d.mkdir(parents=True, exist_ok=True)
         # The app server reads indexes from worker threads; each Index is used by one thread at a time.
-        self.db = sqlite3.connect(d / "index.db", check_same_thread=False)
+        self.db = sqlite3.connect(d / "index.db", check_same_thread=False, timeout=15.0)
+        self.db.execute("pragma journal_mode=WAL;")
+        self.db.execute("pragma busy_timeout=15000;")
         self.db.executescript(SCHEMA)
+        self._base_cached = None
 
     @property
     def base(self) -> str:
         """Where the footage lives: the folder itself, or a b2:// URI for a remote index."""
-        return self.get_meta("source") or str(self.folder)
+        if self._base_cached is None:
+            self._base_cached = self.get_meta("source") or str(self.folder)
+        return self._base_cached
 
     @staticmethod
     def exists(folder: Path) -> bool:
@@ -48,6 +53,8 @@ class Index:
         return row[0] if row else None
 
     def set_meta(self, key, value):
+        if key == "source":
+            self._base_cached = value
         self.db.execute("insert or replace into meta values (?, ?)", (key, value))
         self.db.commit()
 
@@ -55,10 +62,13 @@ class Index:
         return {rel: (size, mtime) for rel, size, mtime in self.db.execute("select rel, size, mtime from files")}
 
     def remove_file(self, rel):
-        row = self.db.execute("select id from files where rel=?", (rel,)).fetchone()
-        if row:
+        norm = str(rel).replace("\\", "/")
+        back = norm.replace("/", "\\")
+        rows = self.db.execute("select id from files where rel=? or rel=?", (norm, back)).fetchall()
+        for row in rows:
             self.db.execute("delete from segments where file_id=?", (row[0],))
             self.db.execute("delete from files where id=?", (row[0],))
+        if rows:
             self.db.commit()
 
     def clear(self):
@@ -74,11 +84,16 @@ class Index:
         return {rel: (size, mtime) for rel, size, mtime in self.db.execute("select rel, size, mtime from vfiles")}
 
     def remove_vfile(self, rel):
+        import hashlib
         import shutil
 
-        shutil.rmtree(self._thumb_dir(rel), ignore_errors=True)
-        self.db.execute("delete from vframes where rel=?", (rel,))
-        self.db.execute("delete from vfiles where rel=?", (rel,))
+        norm = str(rel).replace("\\", "/")
+        back = norm.replace("/", "\\")
+        for h in (hashlib.sha1(norm.encode()).hexdigest()[:16],
+                  hashlib.sha1(back.encode()).hexdigest()[:16]):
+            shutil.rmtree(self.folder / INDEX_DIR / "thumbs" / h, ignore_errors=True)
+        self.db.execute("delete from vframes where rel=? or rel=?", (norm, back))
+        self.db.execute("delete from vfiles where rel=? or rel=?", (norm, back))
         self.db.commit()
 
     def put_vfile(self, rel, size, mtime, times, embs, error=None):
@@ -98,7 +113,16 @@ class Index:
     def _thumb_dir(self, rel):
         import hashlib
 
-        return self.folder / INDEX_DIR / "thumbs" / hashlib.sha1(rel.encode()).hexdigest()[:16]
+        norm = str(rel).replace("\\", "/")
+        h_fwd = hashlib.sha1(norm.encode()).hexdigest()[:16]
+        d_fwd = self.folder / INDEX_DIR / "thumbs" / h_fwd
+        if d_fwd.is_dir():
+            return d_fwd
+        h_back = hashlib.sha1(norm.replace("/", "\\").encode()).hexdigest()[:16]
+        d_back = self.folder / INDEX_DIR / "thumbs" / h_back
+        if d_back.is_dir():
+            return d_back
+        return d_fwd
 
     def put_thumbs(self, rel, times, jpgs):
         d = self._thumb_dir(rel)
