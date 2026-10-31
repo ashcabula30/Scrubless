@@ -11,6 +11,9 @@ CONTRACTIONS = {
     "won't": "will not", "can't": "cannot", "n't": " not", "'re": " are", "'ll": " will",
     "'ve": " have", "'m": " am", "'d": " would", "it's": "it is", "that's": "that is",
     "what's": "what is", "there's": "there is", "let's": "let us",
+    "he's": "he is", "she's": "she is", "it'll": "it will", "they'll": "they will",
+    "you'll": "you will", "we'll": "we will", "who's": "who is", "how's": "how is",
+    "where's": "where is", "what're": "what are", "y'all": "you all", "ain't": "is not",
 }
 
 
@@ -18,8 +21,8 @@ PLACEHOLDER = re.compile(r"\{[^}]*\}|\[[^\]]*\]")  # {cat's name}, [product]: th
 
 
 def normalize(text: str) -> str:
-    t = PLACEHOLDER.sub(" ", text).lower().replace("’", "'")
-    for k in ("won't", "can't", "it's", "that's", "what's", "there's", "let's"):
+    t = PLACEHOLDER.sub(" ", text).lower().replace("’", "'").replace("“", '"').replace("”", '"').replace("—", " ").replace("–", " ")
+    for k in ("won't", "can't", "it's", "that's", "what's", "there's", "let's", "he's", "she's", "who's", "how's", "where's", "what're", "y'all", "ain't"):
         t = t.replace(k, CONTRACTIONS[k])
     for k in ("n't", "'re", "'ll", "'ve", "'m", "'d"):
         t = t.replace(k, CONTRACTIONS[k])
@@ -37,6 +40,13 @@ def embedder(model_name):
 
         _EMBEDDERS[model_name] = load_embedder(model_name, "cuda" if tiers.gpu_info() else "cpu")
     return _EMBEDDERS[model_name]
+
+
+def _format_query(model_name: str, text: str) -> str:
+    """BGE models require an instruction prefix on queries for accurate retrieval."""
+    if "bge" in (model_name or "").lower():
+        return f"Represent this sentence for searching relevant passages: {text}"
+    return text
 
 
 @dataclass
@@ -67,15 +77,21 @@ class Searcher:
                 self.parts.append(_prepare(idx.base, idx.get_meta("embed"), segs, embs))
 
     def _embed(self, model_name, text):
-        return embedder(model_name).encode([text], normalize_embeddings=True)[0]
+        return embedder(model_name).encode([_format_query(model_name, text)], normalize_embeddings=True)[0]
 
-    def find(self, query: str, top=10, min_score=0.55):
+    def _embed_batch(self, model_name, texts):
+        if not texts:
+            return np.zeros((0, 1024), dtype=np.float32)
+        formatted = [_format_query(model_name, t) for t in texts]
+        return embedder(model_name).encode(formatted, normalize_embeddings=True, batch_size=32)
+
+    def find(self, query: str, top=10, min_score=0.55, q_emb_cached=None):
         qn = normalize(query)
         if not qn:
             return []
         hits = []
         meaning_query = PLACEHOLDER.sub(" ", query)
-        q_emb = {}  # one model run per search, not one per indexed folder
+        q_emb = q_emb_cached if q_emb_cached is not None else {}
         for p in self.parts:
             segs, nxt = p["segs"], p["nxt"]
             if p["embed"] not in q_emb:
@@ -113,6 +129,26 @@ class Searcher:
         hits.sort(key=lambda h: -h.score)
         return hits[:top]
 
+    def find_batch(self, queries: list[str], top=10, min_score=0.55):
+        """Search multiple lines in a single batched model forward pass (e.g. for brief tables)."""
+        if not queries:
+            return []
+        q_embs_by_model = {}
+        for p in self.parts:
+            m = p["embed"]
+            if m not in q_embs_by_model:
+                clean_queries = [PLACEHOLDER.sub(" ", q) for q in queries]
+                q_embs_by_model[m] = self._embed_batch(m, clean_queries)
+
+        results = []
+        for idx, q in enumerate(queries):
+            if not q.strip():
+                results.append([])
+                continue
+            q_emb = {m: embs[idx] for m, embs in q_embs_by_model.items()}
+            results.append(self.find(q, top, min_score, q_emb_cached=q_emb))
+        return results
+
 
 def _join(words):
     text = " ".join(w[2] for w in words)
@@ -142,23 +178,34 @@ def _windows(qn, words, nwords, seg):
     if not words:
         return [(seg["start"], seg["end"], None, 0.0)]
     n = len(qn.split())
+    min_size = max(1, n - 3)
+    max_size = min(len(words), max(n + 6, int(n * 1.6)))
     scored = []
-    for size in range(max(1, n - 3), n + 4):
+    for size in range(min_size, max_size + 1):
         for i in range(0, max(1, len(words) - size + 1)):
             j = min(i + size, len(words))
-            scored.append((fuzz.ratio(qn, " ".join(w for w in nwords[i:j] if w)), i, j))
+            cand = " ".join(w for w in nwords[i:j] if w)
+            if not cand:
+                continue
+            r = fuzz.ratio(qn, cand)
+            ts = fuzz.token_set_ratio(qn, cand)
+            # Combined score: token_set ensures key phrase words are covered; ratio rewards tightness
+            comb = 0.45 * r + 0.55 * ts
+            scored.append((comb, i, j))
+    if not scored:
+        return [(seg["start"], seg["end"], None, 0.0)]
     scored.sort(key=lambda x: -x[0])
     best = scored[0][0]
     picked = []
-    for r, i, j in scored:
-        if r < max(best - 12, 60) and picked:
+    for sc, i, j in scored:
+        if sc < max(best - 12, 60) and picked:
             break
         if all(j <= a or i >= b for _, a, b in picked):
-            picked.append((r, i, j))
-    if len(picked) == 1 and picked[0][2] - picked[0][1] >= 0.6 * len(words):
+            picked.append((sc, i, j))
+    if len(picked) == 1 and picked[0][2] - picked[0][1] >= 0.7 * len(words):
         # The match is most of this stretch: take all of it so no word gets clipped.
         picked = [(picked[0][0], 0, len(words))]
-    return [(words[i][0], words[j - 1][1], _join(words[i:j]), r / 100) for r, i, j in picked]
+    return [(words[i][0], words[j - 1][1], _join(words[i:j]), sc / 100) for sc, i, j in picked]
 
 
 def _dedupe(hits):

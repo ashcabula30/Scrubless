@@ -31,6 +31,8 @@ class Vision:
         self.proc = AutoProcessor.from_pretrained(model_id)
         size = self.proc.image_processor.size
         self.side = size.get("height") or size.get("shortest_edge") or 224
+        self._scale = float(self.model.logit_scale.exp().item())
+        self._bias = float(self.model.logit_bias.item())
 
     def embed_images(self, frames):
         """frames: uint8 array (n, side, side, 3) -> normalized (n, d)."""
@@ -57,11 +59,19 @@ class Vision:
             f = _tensor(self.model.get_text_features(**inp))
         return (f / f.norm(dim=-1, keepdim=True))[0].float().cpu().numpy()
 
+    def embed_texts(self, texts: list[str]):
+        if not texts:
+            return np.zeros((0, self.model.config.text_config.hidden_size), dtype=np.float32)
+        torch = self.torch
+        inp = self.proc(text=[t.lower() for t in texts], padding="max_length", max_length=64,
+                        return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            f = _tensor(self.model.get_text_features(**inp))
+        return (f / f.norm(dim=-1, keepdim=True)).float().cpu().numpy()
+
     def prob(self, cos):
         """SigLIP's calibrated 'does this text describe this image' probability."""
-        scale = self.model.logit_scale.exp().item()
-        bias = self.model.logit_bias.item()
-        return 1 / (1 + np.exp(-(np.asarray(cos) * scale + bias)))
+        return 1.0 / (1.0 + np.exp(-(np.asarray(cos) * self._scale + self._bias)))
 
 
 def keyframe_times(path: Path):
@@ -221,9 +231,11 @@ class SceneSearcher:
     def _vision(self, model_id):
         return vision_model(model_id)
 
-    def find(self, query: str, top=10, spread=0.02):
+    def find(self, query: str, top=10, spread=0.02, q_emb_cached=None):
+        if not query.strip():
+            return []
         scenes = []
-        q_emb = {}  # one model run per search, not one per indexed folder
+        q_emb = q_emb_cached if q_emb_cached is not None else {}
         for idx, model_id, fps, frames, embs, files in self.parts:
             vis = self._vision(model_id)
             if model_id not in q_emb:
@@ -231,8 +243,10 @@ class SceneSearcher:
             sims = embs @ q_emb[model_id]
             # Group each file's frames into contiguous runs around its best-matching moments.
             for rel, a, b in files:
-                ids = range(a, b)
                 s = sims[a:b]
+                if len(s) == 0 or np.max(s) < 0.05:
+                    continue
+                ids = range(a, b)
                 taken = np.zeros(len(ids), bool)
                 for _ in range(3):  # up to 3 separate moments per file
                     cand = np.where(taken, -np.inf, s)
@@ -249,6 +263,25 @@ class SceneSearcher:
                     scenes.append(Scene(idx.base, rel, t[0], t[2] + 1 / fps, t[1], float(vis.prob(s[p])), idx))
         scenes.sort(key=lambda sc: -sc.score)
         return scenes[:top]
+
+    def find_batch(self, queries: list[str], top=10, spread=0.02):
+        """Batch search multiple visual queries in a single SigLIP text forward pass."""
+        if not queries:
+            return []
+        q_embs_by_model = {}
+        for idx, model_id, fps, frames, embs, files in self.parts:
+            if model_id not in q_embs_by_model:
+                vis = self._vision(model_id)
+                q_embs_by_model[model_id] = vis.embed_texts(queries)
+
+        results = []
+        for idx, q in enumerate(queries):
+            if not q.strip():
+                results.append([])
+                continue
+            q_emb = {m: arr[idx] for m, arr in q_embs_by_model.items()}
+            results.append(self.find(q, top, spread, q_emb_cached=q_emb))
+        return results
 
 
 def save_thumb(path: Path, t: float, out: Path, height=360):

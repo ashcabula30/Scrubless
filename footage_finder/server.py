@@ -405,17 +405,39 @@ def brief(req: BriefReq):
 
     items = rows_to_items([r.model_dump() for r in req.rows]) if req.rows else parse_brief(req.text)
     t0 = time.time()
+    say_queries = [it.get("say", "") for it in items]
+    show_queries = [visual_query(it["show"]) if it.get("show") else "" for it in items]
     with engine.lock:
-        speech, scenes = engine.searchers(req.sources, any(it["show"] for it in items))
+        speech, scenes = engine.searchers(req.sources, any(q for q in show_queries))
         sb = bases()
+
+        # Batch spoken line search with deduplication
+        unique_says = list(dict.fromkeys(q for q in say_queries if q))
+        if unique_says:
+            batch_said = speech.find_batch(unique_says, req.top, req.min)
+            said_map = dict(zip(unique_says, batch_said))
+        else:
+            said_map = {}
+
+        # Batch visual scene search with deduplication
+        unique_shows = list(dict.fromkeys(q for q in show_queries if q))
+        if unique_shows and scenes:
+            batch_shown = scenes.find_batch(unique_shows, req.top)
+            shown_map = dict(zip(unique_shows, batch_shown))
+        else:
+            shown_map = {}
+
         out = []
         for it in items:
+            say = it.get("say", "")
+            show = visual_query(it["show"]) if it.get("show") else ""
+            said_hits = said_map.get(say, []) if say else []
+            shown_hits = shown_map.get(show, []) if show else []
             out.append({
                 "label": it["label"], "row": it.get("row", it["label"]), "say": it["say"], "show": it["show"],
                 "note": it.get("note", ""),
-                "said": [hit_dict(h, sb) for h in speech.find(it["say"], req.top, req.min)] if it["say"] else [],
-                "shown": [scene_dict(s, sb) for s in scenes.find(visual_query(it["show"]), req.top)]
-                if it["show"] and scenes else [],
+                "said": [hit_dict(h, sb) for h in said_hits],
+                "shown": [scene_dict(s, sb) for s in shown_hits],
             })
     prefetch_previews([l["said"][0] for l in out if l["said"]][:4])  # the picked takes of the first lines
     return {"lines": out, "ms": int((time.time() - t0) * 1000)}

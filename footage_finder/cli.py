@@ -103,22 +103,36 @@ def scene_json(s):
 
 def run_brief(text, folders, top, min_score, want_visual=True):
     """Search every line of a brief. Returns [{label, say, show, said: [...], shown: [...]}]."""
-    from .search import Searcher, parse_brief
+    from .search import Searcher, parse_brief, visual_query
 
     items = parse_brief(text)
     if not items:
         raise SystemExit("Couldn't find any script lines in that brief.")
     speech = Searcher(folders)
     scenes = None
-    for it in items:
-        it["said"] = speech.find(it["say"], top, min_score) if it["say"] else []
-        it["shown"] = []
-        if it["show"] and want_visual:
-            if scenes is None:
-                from .visual import SceneSearcher
 
-                scenes = SceneSearcher(folders)
-            it["shown"] = scenes.find(it["show"], top)
+    say_queries = [it["say"] for it in items if it.get("say")]
+    unique_says = list(dict.fromkeys(q for q in say_queries if q))
+    if unique_says:
+        batch_said = speech.find_batch(unique_says, top, min_score)
+        said_map = dict(zip(unique_says, batch_said))
+    else:
+        said_map = {}
+
+    show_queries = [visual_query(it["show"]) for it in items if it.get("show") and want_visual]
+    unique_shows = list(dict.fromkeys(q for q in show_queries if q))
+    if unique_shows:
+        from .visual import SceneSearcher
+
+        scenes = SceneSearcher(folders)
+        batch_shown = scenes.find_batch(unique_shows, top)
+        shown_map = dict(zip(unique_shows, batch_shown))
+    else:
+        shown_map = {}
+
+    for it in items:
+        it["said"] = said_map.get(it["say"], []) if it.get("say") else []
+        it["shown"] = shown_map.get(visual_query(it["show"]), []) if it.get("show") and want_visual else []
     return items
 
 
